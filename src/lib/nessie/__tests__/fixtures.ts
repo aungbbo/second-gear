@@ -1,6 +1,7 @@
 import { expect, vi } from "vitest";
 import type { NessieSnapshot } from "@/lib/nessie/types";
 import type { BuyerNeed } from "@/lib/types";
+import type { SeedDataset } from "../../../../scripts/nessie-seed/dataset.mjs";
 
 export const NOW = new Date("2026-10-24T12:00:00Z");
 export const BASE_URL = "http://nessie.test";
@@ -126,4 +127,30 @@ export function stubNessieFetch(routes: Record<string, RouteValue>) {
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+/**
+ * Turns the seed dataset (scripts/nessie-seed/dataset.mjs) into the snapshot
+ * Nessie would return after a faithful apply, with synthetic ids.
+ */
+export function seedSnapshot(dataset: SeedDataset, { loansSupported = true } = {}): NessieSnapshot {
+  const accountId = (key: string) => `acct-${key}`;
+  const tagged = <R extends { account: string; body: object }>(records: readonly R[], prefix: string) =>
+    records.map((r, i) => ({ ...(r.body as R["body"]), _id: `${prefix}-${i}`, accountId: accountId(r.account) }));
+
+  return {
+    accounts: dataset.accounts.map((a) => ({ ...a.body, _id: accountId(a.key) })),
+    deposits: tagged(dataset.deposits, "dep"),
+    withdrawals: tagged(dataset.withdrawals, "wd"),
+    purchases: dataset.purchases.map((p, i) => ({
+      ...p.body,
+      _id: `pur-${i}`,
+      accountId: accountId(p.account),
+      merchant_id: `merchant-${p.merchant}`,
+    })),
+    bills: tagged(dataset.bills, "bill"),
+    loans: loansSupported ? tagged(dataset.loans, "loan") : [],
+    loansSupported,
+    dropped: 0,
+  };
 }
