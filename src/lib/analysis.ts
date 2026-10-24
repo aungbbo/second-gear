@@ -1,5 +1,13 @@
-import { buildAllScenarios, depreciatedValue, pickBestScenario } from "@/lib/calculations";
-import type { AffordabilityResult, BuyerNeed, CarAnalysis, CarListing, CreditReport } from "@/lib/types";
+import { buildAllScenarios, depreciatedValue } from "@/lib/calculations";
+import { evaluateVehicle } from "@/lib/affordability/vehicle";
+import type {
+  AffordabilityAssessment,
+  AffordabilityResult,
+  BuyerNeed,
+  CarAnalysis,
+  CarListing,
+  CreditReport,
+} from "@/lib/types";
 
 /**
  * Step 4 — true-cost loan comparison. Plain code, no external call: takes
@@ -8,26 +16,33 @@ import type { AffordabilityResult, BuyerNeed, CarAnalysis, CarListing, CreditRep
  */
 export function analyzeCars(
   listings: CarListing[],
-  affordability: AffordabilityResult,
+  _affordability: AffordabilityResult,
   credit: CreditReport,
   need: BuyerNeed,
+  assessment: AffordabilityAssessment,
 ): CarAnalysis[] {
   return listings.map((listing) => {
-    const downPayment = Math.min(need.downPayment, listing.price);
+    const downPayment = Math.min(need.downPayment, assessment.safeDownPayment, listing.price);
     const allScenarios = buildAllScenarios(
       listing.price,
       downPayment,
       credit.estimatedApr.min,
       credit.estimatedApr.max,
-      affordability.maxSustainablePayment,
+      assessment.maxSustainableLoanPayment,
     );
-    const bestScenario = pickBestScenario(allScenarios);
-    const estimatedValueAt36mo = Math.round(depreciatedValue(listing.price, 36));
+    const evaluation = evaluateVehicle(
+      listing,
+      allScenarios,
+      assessment,
+      need.ownershipCostOverrides,
+    );
+    const bestScenario = evaluation.scenario;
+    const estimatedValueAt36mo = bestScenario.estimatedValueAt36Months || Math.round(depreciatedValue(listing.price, 36));
 
     const warnings: string[] = [];
 
     if (!bestScenario.withinBudget) {
-      const over = bestScenario.monthlyPayment - affordability.maxSustainablePayment;
+      const over = bestScenario.monthlyPayment - assessment.maxSustainableLoanPayment;
       warnings.push(
         `Even stretched to ${bestScenario.termMonths} months, the payment runs $${over}/mo over your safe budget.`,
       );
@@ -53,12 +68,16 @@ export function analyzeCars(
       warnings.push(`${listing.mileage.toLocaleString()} miles already on it — budget for maintenance sooner.`);
     }
 
+    warnings.push(...evaluation.decision.reasons, ...evaluation.decision.warnings);
+
     return {
       listing,
       bestScenario,
       allScenarios,
       estimatedValueAt36mo,
-      warnings,
+      ownershipCosts: evaluation.ownershipCosts,
+      affordabilityDecision: evaluation.decision,
+      warnings: [...new Set(warnings)],
     };
   });
 }

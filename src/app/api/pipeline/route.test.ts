@@ -58,6 +58,8 @@ const PIPELINE_KEYS: (keyof PipelineResult)[] = [
   "need",
   "credit",
   "affordability",
+  "affordabilityAssessment",
+  "searchConstraints",
   "listings",
   "rankedCars",
   "dealerPacket",

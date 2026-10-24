@@ -58,6 +58,7 @@ export function countNegativeEquityMonths(
 /** APR edges up slightly on longer terms, reflecting real subprime pricing. */
 export function aprForTerm(baseAprMin: number, baseAprMax: number, termMonths: number): number {
   const base = (baseAprMin + baseAprMax) / 2;
+  if (base === 0) return 0;
   const escalation = ((termMonths - 36) / 36) * 1.6;
   return Math.round((base + escalation) * 10) / 10;
 }
@@ -76,6 +77,8 @@ export function buildLoanScenario(
   const totalCost = payment * termMonths + downPayment;
   const totalInterest = totalCost - price;
   const schedule = amortizationSchedule(amountFinanced, apr, termMonths);
+  const balanceAt36 = schedule[Math.min(36, termMonths)];
+  const estimatedValueAt36Months = depreciatedValue(price, 36);
   const negativeEquityMonths = countNegativeEquityMonths(schedule, price);
 
   return {
@@ -85,7 +88,11 @@ export function buildLoanScenario(
     amountFinanced,
     monthlyPayment: Math.round(payment),
     totalInterest: Math.round(totalInterest),
+    totalFinancingCost: Math.round(payment * termMonths),
     totalCost: Math.round(totalCost),
+    remainingBalanceAt36Months: Math.round(balanceAt36),
+    estimatedValueAt36Months: Math.round(estimatedValueAt36Months),
+    negativeEquityAt36Months: Math.round(Math.max(0, balanceAt36 - estimatedValueAt36Months)),
     negativeEquityMonths,
     withinBudget: payment <= maxSustainablePayment + 0.5,
   };
@@ -112,6 +119,8 @@ export function principalForPayment(payment: number, annualAprPercent: number, t
 
 export function pickBestScenario(scenarios: LoanScenario[]): LoanScenario {
   const affordable = scenarios.filter((s) => s.withinBudget);
-  const pool = affordable.length > 0 ? affordable : scenarios;
-  return [...pool].sort((a, b) => a.totalInterest - b.totalInterest)[0];
+  if (affordable.length > 0) return [...affordable].sort((a, b) => a.totalInterest - b.totalInterest)[0];
+  // If nothing is affordable, surface the least unaffordable payment so the
+  // caller can explain that purchasing should be deferred.
+  return [...scenarios].sort((a, b) => a.monthlyPayment - b.monthlyPayment || a.totalInterest - b.totalInterest)[0];
 }
