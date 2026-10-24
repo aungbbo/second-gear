@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { analyzeSnapshot, dedupe, incomeVolatility, parseNessieDate } from "@/lib/nessie/cashflow";
+import {
+  analyzeSnapshot,
+  analyzeSnapshotWithStats,
+  dedupe,
+  incomeVolatility,
+  parseNessieDate,
+} from "@/lib/nessie/cashflow";
 import { NessieError } from "@/lib/nessie/errors";
 import type { NessieSnapshot } from "@/lib/nessie/types";
 import type { AffordabilityResult } from "@/lib/types";
@@ -144,6 +150,36 @@ describe("analyzeSnapshot — insufficient data", () => {
     } catch (err) {
       expect((err as NessieError).kind).toBe("insufficient_data");
     }
+  });
+});
+
+describe("analyzeSnapshotWithStats", () => {
+  it("reports zero ignored records for clean data and matches analyzeSnapshot", () => {
+    const { result, stats } = analyzeSnapshotWithStats(baselineSnapshot(), NEED, NOW);
+    expect(stats).toEqual({ malformed: 0, invalidDates: 0, duplicates: 0 });
+    expect(result).toEqual(analyze(baselineSnapshot()));
+  });
+
+  it("counts malformed, invalid-date, and duplicate records without changing the result", () => {
+    const snap = baselineSnapshot();
+    snap.dropped = 4;
+    snap.deposits.push(
+      { _id: "bad-date", accountId: "chk", transaction_date: "yesterday", amount: 500, medium: "balance" },
+      { _id: "no-date", accountId: "chk", amount: 500, medium: "balance" },
+      { ...snap.deposits[0] },
+      { ...snap.deposits[1], _id: "d2-copy" },
+    );
+    snap.bills.push({ _id: "b-no-date", accountId: "chk", status: "completed", payee: "Water", payment_amount: 40 });
+
+    const { result, stats } = analyzeSnapshotWithStats(snap, NEED, NOW);
+    expect(stats).toEqual({ malformed: 4, invalidDates: 3, duplicates: 2 });
+    expect(result).toEqual(analyze(baselineSnapshot()));
+  });
+
+  it("does not count recurring bills or loans as missing dates", () => {
+    const { stats } = analyzeSnapshotWithStats(baselineSnapshot(), NEED, NOW);
+    // Baseline has a recurring bill with no payment_date and loans without dates in the window.
+    expect(stats.invalidDates).toBe(0);
   });
 });
 

@@ -48,7 +48,7 @@ describe("getNessieConfig", () => {
 
   it("defaults the base URL and trims a trailing slash", () => {
     expect(getNessieConfig({ NESSIE_MODE: "live", NESSIE_API_KEY: "k", NESSIE_CUSTOMER_ID: "c" })).toMatchObject({
-      baseUrl: "http://api.nessieisreal.com",
+      baseUrl: "https://api.nessieisreal.com",
     });
     expect(
       getNessieConfig({ NESSIE_MODE: "live", NESSIE_API_KEY: "k", NESSIE_CUSTOMER_ID: "c", NESSIE_BASE_URL: "http://x.test/" }),
@@ -83,6 +83,46 @@ describe("analyzeCashFlow dispatcher", () => {
     stubNessieFetch({ [`/customers/${CUSTOMER_ID}/accounts`]: { status: 500 } });
     await expect(analyzeCashFlow(NEED, CREDIT)).rejects.toMatchObject({ kind: "upstream" });
     expect(mockCashFlow).not.toHaveBeenCalled();
+  });
+
+  it("logs one counts-only warning when live records are ignored", async () => {
+    stubLiveEnv();
+    const routes = baselineRoutes();
+    const deposits = routes["/accounts/chk/deposits"] as Array<Record<string, unknown>>;
+    routes["/accounts/chk/deposits"] = [...deposits, { ...deposits[0] }];
+    stubNessieFetch(routes);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+    try {
+      const result = await analyzeCashFlow(NEED, CREDIT);
+      expect(result.avgMonthlyIncome).toBe(3000);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toBe("[nessie] ignored records: malformed=0 invalidDates=0 duplicates=1");
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).not.toContain(API_KEY);
+      expect(logged).not.toContain("3000");
+      expect(logged).not.toContain("d1");
+      expect(logged).not.toContain(CUSTOMER_ID);
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
+  });
+
+  it("does not warn when every live record is used", async () => {
+    stubLiveEnv();
+    stubNessieFetch(baselineRoutes());
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-24T12:00:00Z"));
+    try {
+      await analyzeCashFlow(NEED, CREDIT);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      warn.mockRestore();
+    }
   });
 
   it("returns live affordability from Nessie data", async () => {

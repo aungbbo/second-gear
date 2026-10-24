@@ -148,6 +148,37 @@ function tag<T>(records: T[], accountId: string): WithAccount<T>[] {
   return records.map((record) => ({ ...record, accountId }));
 }
 
+/** Shows only enough of an id to tell customers apart in logs. */
+export function maskId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
+}
+
+const UNVERIFIED_CUSTOMER_HINT = (id: string) =>
+  `customer ${maskId(id)}: Nessie returns an empty list for an unknown NESSIE_CUSTOMER_ID or an invalid NESSIE_API_KEY — verify both`;
+const EMPTY_CUSTOMER_HINT = (id: string) => `customer ${maskId(id)} exists but has no accounts — seed it in the sandbox`;
+
+/**
+ * An empty account list is ambiguous: Nessie answers `200 []` for a real
+ * customer with no accounts, an unknown customer id, and an invalid key
+ * alike. `GET /customers/{id}` tells them apart (404 for the last two).
+ */
+async function explainEmptyAccounts(cfg: LiveNessieConfig): Promise<NessieError> {
+  try {
+    await nessieGet(cfg, `/customers/${encodeURIComponent(cfg.customerId)}`);
+  } catch (err) {
+    if (err instanceof NessieError && err.kind === "not_found") {
+      return new NessieError("not_found", "We couldn't find that bank customer.", {
+        status: 404,
+        detail: UNVERIFIED_CUSTOMER_HINT(cfg.customerId),
+      });
+    }
+    throw err;
+  }
+  return new NessieError("insufficient_data", "No accounts for this Nessie customer.", {
+    detail: EMPTY_CUSTOMER_HINT(cfg.customerId),
+  });
+}
+
 /** Pulls every read-only resource the cash-flow analyzer needs. */
 export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<NessieSnapshot> {
   let accountsResult: ListResult<NessieAccount>;
@@ -155,14 +186,17 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     accountsResult = await getCustomerAccounts(cfg, cfg.customerId);
   } catch (err) {
     if (err instanceof NessieError && err.kind === "not_found") {
-      throw new NessieError("not_found", "No accounts for this Nessie customer.", { status: 404 });
+      throw new NessieError("not_found", "No accounts for this Nessie customer.", {
+        status: 404,
+        detail: UNVERIFIED_CUSTOMER_HINT(cfg.customerId),
+      });
     }
     throw err;
   }
 
   const accounts = accountsResult.records;
   if (accounts.length === 0) {
-    throw new NessieError("insufficient_data", "No accounts for this Nessie customer.");
+    throw await explainEmptyAccounts(cfg);
   }
 
   const perAccount = await Promise.all(

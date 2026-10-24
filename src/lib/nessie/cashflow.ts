@@ -65,6 +65,16 @@ export function incomeVolatility(bucketTotals: number[]): AffordabilityResult["i
   return "high";
 }
 
+/** Counts of records the analyzer ignored — numbers only, safe to log. */
+export interface CashFlowStats {
+  /** Dropped by the client for failing shape validation. */
+  malformed: number;
+  /** Dated records whose date is missing or unparseable. */
+  invalidDates: number;
+  /** Removed by `_id` or fingerprint dedupe. */
+  duplicates: number;
+}
+
 /**
  * Step 2 on live data — turns a Nessie snapshot into the same
  * AffordabilityResult the rest of the pipeline already consumes.
@@ -74,6 +84,22 @@ export function analyzeSnapshot(
   need: BuyerNeed,
   now: Date = new Date(),
 ): AffordabilityResult {
+  return analyzeSnapshotWithStats(snapshot, need, now).result;
+}
+
+/** `analyzeSnapshot` plus counts of what it ignored along the way. */
+export function analyzeSnapshotWithStats(
+  snapshot: NessieSnapshot,
+  need: BuyerNeed,
+  now: Date = new Date(),
+): { result: AffordabilityResult; stats: CashFlowStats } {
+  let duplicates = 0;
+  const dedupeCounted = <T extends { _id: string }>(records: T[], fingerprint: (record: T) => string): T[] => {
+    const unique = dedupe(records, fingerprint);
+    duplicates += records.length - unique.length;
+    return unique;
+  };
+
   const nowMs = now.getTime();
   const windowStart = nowMs - LOOKBACK_DAYS * DAY_MS;
 
@@ -86,31 +112,40 @@ export function analyzeSnapshot(
 
   const accountType = new Map(snapshot.accounts.map((a) => [a._id, a.type]));
 
-  const deposits = dedupe(
+  const deposits = dedupeCounted(
     snapshot.deposits,
     (d) => `${d.accountId}|deposit|${d.transaction_date}|${d.amount}|${d.description ?? ""}|${d.payee_id ?? ""}`,
   ).filter((d) => !isCancelled(d.status) && isCash(d.medium));
 
-  const withdrawals = dedupe(
+  const withdrawals = dedupeCounted(
     snapshot.withdrawals,
     (w) => `${w.accountId}|withdrawal|${w.transaction_date}|${w.amount}|${w.description ?? ""}|${w.payer_id ?? ""}`,
   ).filter((w) => !isCancelled(w.status) && isCash(w.medium));
 
-  const purchases = dedupe(
+  const purchases = dedupeCounted(
     snapshot.purchases,
     (p) => `${p.accountId}|purchase|${p.purchase_date}|${p.amount}|${p.description ?? ""}|${p.merchant_id ?? ""}`,
   ).filter((p) => !isCancelled(p.status) && isCash(p.medium));
 
-  const bills = dedupe(
+  const bills = dedupeCounted(
     snapshot.bills,
     (b) =>
       `${b.accountId}|bill|${b.payment_date ?? b.recurring_date ?? ""}|${b.payment_amount}|${b.payee ?? ""}|${b.nickname ?? ""}`,
   ).filter((b) => !isCancelled(b.status));
 
-  const loans = dedupe(
+  const loans = dedupeCounted(
     snapshot.loans,
     (l) => `${l.accountId}|loan|${l.creation_date ?? ""}|${l.monthly_payment}|${l.type ?? ""}|${l.amount ?? ""}`,
   );
+
+  // Records that need a date to land in the window; recurring bills and loans don't.
+  const datedBills = bills.filter((b) => b.status === "completed" || b.status === "pending");
+  const invalidDates = [
+    ...deposits.map((d) => d.transaction_date),
+    ...withdrawals.map((w) => w.transaction_date),
+    ...purchases.map((p) => p.purchase_date),
+    ...datedBills.map((b) => b.payment_date),
+  ].filter((date) => parseNessieDate(date) === null).length;
 
   // Income: cash deposits into checking or savings, split into 30-day buckets.
   const incomeBuckets = new Array<number>(LOOKBACK_MONTHS).fill(0);
@@ -139,7 +174,7 @@ export function analyzeSnapshot(
   // Essentials: recurring bills monthly, one-off bills and cash withdrawals averaged over the window.
   const recurringBills = sum(bills.filter((b) => b.status === "recurring").map((b) => b.payment_amount));
   const oneOffBills = windowAverage(
-    bills.filter((b) => b.status === "completed" || b.status === "pending"),
+    datedBills,
     (b) => b.payment_date,
     (b) => b.payment_amount,
   );
@@ -179,7 +214,7 @@ export function analyzeSnapshot(
 
   const accountCount = snapshot.accounts.length;
 
-  return {
+  const result: AffordabilityResult = {
     avgMonthlyIncome,
     essentialExpenses,
     existingDebtPayments,
@@ -191,4 +226,6 @@ export function analyzeSnapshot(
     incomeVolatility: incomeVolatility(incomeBuckets),
     summary: `Based on $${avgMonthlyIncome} in average monthly deposits across ${accountCount} account${accountCount === 1 ? "" : "s"} and $${essentialExpenses} in recurring essentials and bills, a car payment above $${maxSustainablePayment} a month would eat into rent and groceries. We're recommending you shop for $${recommendedPayment} or less, not the $${need.maxMonthlyPayment} ceiling you gave us.`,
   };
+
+  return { result, stats: { malformed: snapshot.dropped, invalidDates, duplicates } };
 }

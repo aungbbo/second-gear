@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchNessieSnapshot, getAccountLoans, getCustomerAccounts, nessieGet } from "@/lib/nessie/client";
+import { fetchNessieSnapshot, getAccountLoans, getCustomerAccounts, maskId, nessieGet } from "@/lib/nessie/client";
 import { NessieError } from "@/lib/nessie/errors";
 import { API_KEY, BASE_URL, CUSTOMER_ID, LIVE_CONFIG, baselineRoutes, stubNessieFetch } from "./fixtures";
 
@@ -134,17 +134,57 @@ describe("fetchNessieSnapshot", () => {
     expect(snapshot.loans).toEqual([]);
   });
 
-  it("maps an unknown customer to not_found", async () => {
+  it("maps an accounts 404 to not_found with a credentials hint", async () => {
     stubNessieFetch({});
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("not_found");
     expect(err.userMessage).toBe("No accounts for this Nessie customer.");
+    expect(err.message).toContain("NESSIE_CUSTOMER_ID");
+    expect(err.message).toContain(CUSTOMER_ID);
+    expect(err.message).not.toContain(API_KEY);
   });
 
-  it("maps a customer with no accounts to insufficient_data", async () => {
-    stubNessieFetch({ [`/customers/${CUSTOMER_ID}/accounts`]: [] });
+  it("does not treat `200 []` from an unknown customer or bad key as a real empty customer", async () => {
+    // Nessie answers 200 [] for accounts but 404 for the customer itself.
+    const fetchMock = stubNessieFetch({ [`/customers/${CUSTOMER_ID}/accounts`]: [] });
+    const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
+    expect(err.kind).toBe("not_found");
+    expect(err.userMessage).toBe("We couldn't find that bank customer.");
+    expect(err.message).toContain("NESSIE_CUSTOMER_ID");
+    expect(err.message).toContain("NESSIE_API_KEY");
+    expect(err.message).not.toContain(API_KEY);
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
+    expect(paths).toEqual([`/customers/${CUSTOMER_ID}/accounts`, `/customers/${CUSTOMER_ID}`]);
+  });
+
+  it("maps a verified customer with no accounts to insufficient_data", async () => {
+    stubNessieFetch({
+      [`/customers/${CUSTOMER_ID}/accounts`]: [],
+      [`/customers/${CUSTOMER_ID}`]: { _id: CUSTOMER_ID, first_name: "Test", last_name: "Buyer" },
+    });
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("insufficient_data");
+    expect(err.userMessage).toBe("No accounts for this Nessie customer.");
+    expect(err.message).toContain(`customer ${CUSTOMER_ID} exists but has no accounts`);
+    expect(err.message).not.toContain(API_KEY);
+  });
+
+  it("propagates an upstream failure while verifying an empty customer", async () => {
+    stubNessieFetch({
+      [`/customers/${CUSTOMER_ID}/accounts`]: [],
+      [`/customers/${CUSTOMER_ID}`]: { status: 500 },
+    });
+    const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
+    expect(err.kind).toBe("upstream");
+  });
+
+  it("masks long customer ids in diagnostics", async () => {
+    const longId = "abcdef12-3456-4789-8abc-def012345678";
+    stubNessieFetch({ [`/customers/${longId}/accounts`]: [] });
+    const err = await catchError(fetchNessieSnapshot({ ...LIVE_CONFIG, customerId: longId }));
+    expect(err.message).toContain("customer abcdef12…");
+    expect(err.message).not.toContain(longId);
+    expect(maskId("short")).toBe("short");
   });
 
   it("fails the whole snapshot when a sub-resource fails", async () => {
