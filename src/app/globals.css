@@ -1,26 +1,80 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #16231f;
+  --ink-soft: #3c4a41;
+  --paper: #eff1ea;
+  --paper-raised: #e4e6da;
+  --paper-high: #daddcd;
+  --line: #c9cdbc;
+  --gold: #c68a2e;
+  --gold-deep: #9c6a1e;
+  --gold-paper: #f3e6cd;
+  --moss: #45614a;
+  --moss-paper: #dde6da;
+  --rust: #a84631;
+  --rust-paper: #ead9d1;
+  --cream: #f7f6f0;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-paper-high: var(--paper-high);
+  --color-line: var(--line);
+  --color-gold: var(--gold);
+  --color-gold-deep: var(--gold-deep);
+  --color-gold-paper: var(--gold-paper);
+  --color-moss: var(--moss);
+  --color-moss-paper: var(--moss-paper);
+  --color-rust: var(--rust);
+  --color-rust-paper: var(--rust-paper);
+  --color-cream: var(--cream);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body), sans-serif;
+}
+
+* {
+  border-color: var(--line);
+}
+
+::selection {
+  background: var(--gold);
+  color: var(--cream);
+}
+
+.font-display {
+  font-family: var(--font-display), serif;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-deep);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
 }
