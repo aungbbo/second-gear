@@ -36,6 +36,7 @@ async function start(options: MockNessieOptions = {}) {
 }
 
 beforeEach(() => {
+  vi.stubEnv("CONSENT_STORE", "memory");
   cwd = mkdtempSync(join(tmpdir(), "nessie-seed-test-"));
 });
 

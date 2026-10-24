@@ -31,6 +31,7 @@ vi.setConfig({ testTimeout: 30000 });
 let crs: MockCrs;
 
 beforeEach(() => {
+  vi.stubEnv("CONSENT_STORE", "memory");
   __resetCrsAuthForTests();
   vi.mocked(mockSoftCredit).mockClear();
 });

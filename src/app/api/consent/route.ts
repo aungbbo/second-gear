@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ConsentError, issueConsentToken } from "@/lib/consent";
+import { assertConsentRuntime, ConsentError, issueConsentToken } from "@/lib/consent";
+import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
 
 /**
  * Records the buyer's approval of a soft credit check and returns a
@@ -14,9 +15,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
   }
   try {
+    assertConsentRuntime();
     return NextResponse.json(issueConsentToken(body), { headers: { "cache-control": "no-store" } });
   } catch (err) {
     if (err instanceof ConsentError) return NextResponse.json({ error: err.userMessage }, { status: 400 });
+    if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {
+      return NextResponse.json({ error: err.userMessage }, { status: 503 });
+    }
     throw err;
   }
 }

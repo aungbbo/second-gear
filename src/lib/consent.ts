@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { ConsentConfigurationError, createConsentReplayStore, type ConsentReplayStore, ConsentStorageError } from "@/lib/consent-store";
 
 /**
  * Server-issued consent for a soft credit pull.
@@ -44,22 +45,31 @@ interface ConsentPayload {
 
 // Kept on globalThis so dev-server module reloads don't invalidate live tokens.
 const store = globalThis as typeof globalThis & {
-  __secondGearConsent?: { secret: Buffer; used: Map<string, number> };
+  __secondGearConsent?: { secret: Buffer };
 };
 
 function state() {
-  if (!store.__secondGearConsent) {
-    const configured = process.env.CONSENT_SIGNING_SECRET;
-    store.__secondGearConsent = {
-      secret: configured && configured.length >= 32 ? Buffer.from(configured) : randomBytes(32),
-      used: new Map(),
-    };
-  }
+  if (!store.__secondGearConsent) store.__secondGearConsent = { secret: randomBytes(32) };
   return store.__secondGearConsent;
 }
 
+function signingSecret(env: Record<string, string | undefined> = process.env): Buffer {
+  const configured = env.CONSENT_SIGNING_SECRET;
+  if (configured !== undefined) {
+    if (Buffer.byteLength(configured) < 32) throw new ConsentConfigurationError("CONSENT_SIGNING_SECRET must be at least 32 bytes");
+    return Buffer.from(configured);
+  }
+  if (env.NODE_ENV === "production") throw new ConsentConfigurationError("CONSENT_SIGNING_SECRET is required in production");
+  return state().secret;
+}
+
 const b64url = (buf: Buffer) => buf.toString("base64url");
-const sign = (payload: string) => b64url(createHmac("sha256", state().secret).update(payload).digest());
+const sign = (payload: string, env: Record<string, string | undefined> = process.env) => b64url(createHmac("sha256", signingSecret(env)).update(payload).digest());
+
+export function assertConsentRuntime(env: Record<string, string | undefined> = process.env): void {
+  signingSecret(env);
+  createConsentReplayStore(env);
+}
 
 /**
  * Mints a consent token after validating the buyer's approval. Only the
@@ -79,11 +89,12 @@ export function issueConsentToken(body: unknown, now: number = Date.now()): { co
  * Verifies and consumes a consent token: signature, current text version,
  * freshness by the server clock, and single use.
  */
-export function consumeConsentToken(
+export async function consumeConsentToken(
   token: unknown,
   context: { ipAddress?: string; userAgent?: string } = {},
   now: number = Date.now(),
-): VerifiedConsent {
+  replayStore?: ConsentReplayStore,
+): Promise<VerifiedConsent> {
   if (typeof token !== "string" || token.length === 0) throw new ConsentError("missing");
   const [encoded, signature, extra] = token.split(".");
   if (!encoded || !signature || extra !== undefined) throw new ConsentError("malformed");
@@ -103,10 +114,15 @@ export function consumeConsentToken(
   if (payload.iat > now + MAX_FUTURE_SKEW_MS) throw new ConsentError("future");
   if (now - payload.iat > CONSENT_MAX_AGE_MS) throw new ConsentError("expired");
 
-  const { used } = state();
-  for (const [jti, expiry] of used) if (expiry < now) used.delete(jti);
-  if (used.has(payload.jti)) throw new ConsentError("replayed");
-  used.set(payload.jti, payload.iat + CONSENT_MAX_AGE_MS);
+  const ttlSeconds = Math.max(1, Math.ceil((payload.iat + CONSENT_MAX_AGE_MS - now) / 1000));
+  let claimed: boolean;
+  try {
+    claimed = await (replayStore ?? createConsentReplayStore()).claim(payload.jti, ttlSeconds);
+  } catch (err) {
+    if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) throw err;
+    throw new ConsentStorageError(err);
+  }
+  if (!claimed) throw new ConsentError("replayed");
 
   return {
     version: payload.v,

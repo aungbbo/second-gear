@@ -5,6 +5,7 @@ import { analyzeCashFlow } from "@/lib/providers/nessie";
 import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
 import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
+import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
 import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
 import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
@@ -52,9 +53,12 @@ export async function POST(req: NextRequest) {
   // Consent comes first: no provider runs without a fresh, server-issued, unused token.
   let consent: VerifiedConsent;
   try {
-    consent = consumeConsentToken(consentToken, { ipAddress: clientIp(req), userAgent: req.headers.get("user-agent") ?? undefined });
+    consent = await consumeConsentToken(consentToken, { ipAddress: clientIp(req), userAgent: req.headers.get("user-agent") ?? undefined });
   } catch (err) {
     if (err instanceof ConsentError) return NextResponse.json({ error: err.userMessage }, { status: 400 });
+    if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {
+      return NextResponse.json({ error: err.userMessage }, { status: 503 });
+    }
     throw err;
   }
 

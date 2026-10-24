@@ -133,9 +133,9 @@ export function checkReportOutcome(
   }
 
   if (pullType !== "Soft") {
-    console.error(`[crs] refused a report whose creditPullType was ${pullType ?? "missing"}; nothing was used`);
+    console.error(`[crs] refused a report with ${pullType == null ? "missing" : "explicit non-Soft"} creditPullType; nothing was used`);
     throw new CrsError("not_soft_pull", "We stopped: the credit check wasn't a soft pull.", {
-      detail: `${endpoint}: creditPullType=${pullType ?? "missing"}`,
+      detail: `${endpoint}: creditPullType=${pullType == null ? "missing" : "non-soft"}`,
     });
   }
 

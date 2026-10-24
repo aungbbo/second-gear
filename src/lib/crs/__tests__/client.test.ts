@@ -129,13 +129,14 @@ describe("orderCreditReport", () => {
 
 describe("checkReportOutcome", () => {
   it("accepts a soft-pull file and rejects anything that is not explicitly Soft", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(checkReportOutcome(syntheticP05Report()).responseDetail?.creditPullType).toBe("Soft");
-    for (const creditPullType of ["Hard", undefined, "soft"]) {
+    for (const creditPullType of ["Hard", undefined, "soft", "unexpected-sensitive-value"]) {
       const report = syntheticP05Report();
       report.responseDetail = { ...report.responseDetail, creditPullType };
       expect(() => checkReportOutcome(report)).toThrowError(/soft pull/);
     }
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("unexpected-sensitive-value");
   });
 
   it("checks errorMessages before the file status", () => {

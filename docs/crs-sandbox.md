@@ -15,7 +15,9 @@ Set these in `.env.local` (server-only; never `NEXT_PUBLIC_`):
 | `CRS_TEST_PERSONA` | `P05` (the only allowlisted persona) |
 | `CRS_PERSONA_SSN` | P05's 9-digit sandbox SSN from the CRS persona list. Not committed |
 | `CRS_BUREAU`, `CRS_CONFIG`, `CRS_BASE_URL` | Optional. Defaults: `experian`, `exp-prequal-vantage4`, `https://api-sandbox.stitchcredit.com/api` |
-| `CONSENT_SIGNING_SECRET` | Optional, 32+ chars. Otherwise each server process uses a random secret |
+| `CONSENT_STORE` | `memory` only for local development/tests; production must use `upstash` |
+| `CONSENT_SIGNING_SECRET` | Required in production and at least 32 bytes |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Required in production when `CONSENT_STORE=upstash`; used for atomic global one-time token consumption |
 
 The account needs the bureau role for the bureau you call:
 

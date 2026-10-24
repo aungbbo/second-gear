@@ -36,6 +36,7 @@ afterEach(() => {
 
 // The credit step now needs explicit mode and consent; these Nessie-focused tests use the CRS mock.
 beforeEach(() => {
+  vi.stubEnv("CONSENT_STORE", "memory");
   vi.stubEnv("CRS_MODE", "mock");
 });
 
@@ -78,6 +79,16 @@ describe("POST /api/pipeline", () => {
     expect(await response.json()).toEqual({
       error: "Cash-flow provider not configured: missing NESSIE_API_KEY and NESSIE_CUSTOMER_ID.",
     });
+  });
+
+  it("returns 503 before providers when consent replay storage is unavailable", async () => {
+    const request = pipelineRequest();
+    vi.stubEnv("CONSENT_STORE", "upstash");
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
+    const response = await POST(request);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Consent service is not configured." });
   });
 
   it("returns 502 and hides the key when Nessie rejects the credentials", async () => {
