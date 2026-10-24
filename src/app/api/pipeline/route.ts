@@ -4,7 +4,18 @@ import { pullSoftCredit } from "@/lib/providers/crs";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
 import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
+import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
+
+const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
+  config: 503,
+  auth: 502,
+  timeout: 502,
+  upstream: 502,
+  invalid_response: 502,
+  not_found: 422,
+  insufficient_data: 422,
+};
 
 export async function POST(req: NextRequest) {
   let need: BuyerNeed;
@@ -52,7 +63,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    console.error("Pipeline failure", err);
+    console.error("Pipeline failure", err instanceof NessieError ? `${err.name}[${err.kind}]: ${err.message}` : err);
+    if (err instanceof NessieError) {
+      return NextResponse.json({ error: err.userMessage }, { status: NESSIE_ERROR_STATUS[err.kind] });
+    }
     return NextResponse.json({ error: "The pipeline hit a snag. Try again." }, { status: 500 });
   }
 }
