@@ -14,6 +14,8 @@ import { assertRequestOrigin, getRequestIdentity, OriginConfigurationError } fro
 import { getSessionId } from "@/lib/session";
 import { enforceRateLimits, RateLimitError } from "@/lib/rate-limit";
 import { recordSecurityEvent } from "@/lib/monitoring";
+import { assessAffordability } from "@/lib/affordability/assessment";
+import { buildAffordableSearchConstraints } from "@/lib/affordability/constraints";
 
 const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
   config: 503,
@@ -100,12 +102,14 @@ export async function POST(req: NextRequest) {
 
     // Step 2: affordability from cash flow.
     const affordability = await analyzeCashFlow(need, credit);
+    const affordabilityAssessment = assessAffordability(need, credit, affordability);
+    const searchConstraints = buildAffordableSearchConstraints(need, affordabilityAssessment);
 
     // Step 3: search live listings.
     const listings = await searchLiveListings(need, affordability, credit);
 
     // Step 4: true-cost loan comparison (plain code).
-    const analyses = analyzeCars(listings, affordability, credit, need);
+    const analyses = analyzeCars(listings, affordability, credit, need, affordabilityAssessment);
 
     // Step 5: explain, rank, build dealer packet.
     const { rankedCars, dealerPacket, savingsHighlight } = await explainAndRank({
@@ -119,6 +123,8 @@ export async function POST(req: NextRequest) {
       need,
       credit,
       affordability,
+      affordabilityAssessment,
+      searchConstraints,
       listings,
       rankedCars,
       dealerPacket,
@@ -152,7 +158,48 @@ function normalizeNeed(raw: unknown): BuyerNeed {
     timeframeWeeks: clampNumber(input.timeframeWeeks, 1, 26, 4),
     downPayment: clampNumber(input.downPayment, 0, 50000, 0),
     zip: typeof input.zip === "string" && /^\d{5}$/.test(input.zip) ? input.zip : "43215",
+    ownershipCostOverrides: normalizeOwnershipCostOverrides(input.ownershipCostOverrides),
+    searchPreferences: normalizeSearchPreferences(input.searchPreferences),
   };
+}
+
+function normalizeOwnershipCostOverrides(raw: unknown) {
+  const input = (raw ?? {}) as Record<string, unknown>;
+  const result = {
+    insuranceMonthly: optionalMoney(input.insuranceMonthly),
+    fuelMonthly: optionalMoney(input.fuelMonthly),
+    maintenanceMonthly: optionalMoney(input.maintenanceMonthly),
+    registrationAndTaxesMonthly: optionalMoney(input.registrationAndTaxesMonthly),
+    otherMonthly: optionalMoney(input.otherMonthly),
+    dealerFees: optionalMoney(input.dealerFees),
+  };
+  return Object.values(result).some((value) => value !== undefined) ? result : undefined;
+}
+
+function normalizeSearchPreferences(raw: unknown) {
+  const input = (raw ?? {}) as Record<string, unknown>;
+  const vehicleTypes = Array.isArray(input.vehicleTypes)
+    ? input.vehicleTypes
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim().slice(0, 40))
+        .filter(Boolean)
+        .slice(0, 8)
+    : undefined;
+  const result = {
+    radiusMiles: optionalInteger(input.radiusMiles, 1, 500),
+    maxMileage: optionalInteger(input.maxMileage, 0, 500000),
+    minYear: optionalInteger(input.minYear, 1900, new Date().getFullYear() + 1),
+    vehicleTypes,
+  };
+  return Object.values(result).some((value) => value !== undefined) ? result : undefined;
+}
+
+function optionalMoney(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100000 ? value : undefined;
+}
+
+function optionalInteger(value: unknown, min: number, max: number): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : undefined;
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
