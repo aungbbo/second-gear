@@ -128,4 +128,12 @@ describe("parsing helpers", () => {
     expect(parseCrsDate("08/15/2026")).toBe(Date.UTC(2026, 7, 15));
     expect(parseCrsDate("Aug 15")).toBeUndefined();
   });
+
+  it("uses dateRequested when dateOrdered is absent", () => {
+    const report = syntheticP05Report();
+    report.responseDetail = { dateRequested: "2026-10-24", creditPullType: "Soft" };
+    report.scores = [{ ...report.scores![0], scoreFactors: [] }];
+    const credit = mapCrsReport(report, { bureau: "experian", now: Date.UTC(2030, 0, 1) });
+    expect(credit.factors.find((factor) => factor.label === "Credit inquiries, last 6 months")?.detail).toContain("4 inquiries");
+  });
 });

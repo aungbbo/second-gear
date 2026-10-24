@@ -3,7 +3,7 @@ import type { VerifiedConsent } from "@/lib/consent";
 import { __resetCrsAuthForTests } from "@/lib/crs/auth";
 import { checkReportOutcome, orderCreditReport } from "@/lib/crs/client";
 import { CrsError } from "@/lib/crs/errors";
-import { expectNoLeaks, liveConfig, PII, SYNTH_PASSWORD, SYNTH_SSN, syntheticP05Report } from "./fixtures";
+import { expectNoLeaks, liveConfig, liveConfigWith, PII, SYNTH_PASSWORD, SYNTH_SSN, syntheticP05Report } from "./fixtures";
 import { startMockCrs, type MockCrs, type ReportMode } from "./mock-crs-server";
 
 let crs: MockCrs;
@@ -70,6 +70,26 @@ describe("orderCreditReport", () => {
     expectNoLeaks(err.message + err.userMessage, [...PII, SYNTH_PASSWORD, crs.baseUrl, ...crs.issuedTokens]);
   });
 
+  it("accepts the sandbox response that omits pull-type metadata for the exact documented Experian prequal config", async () => {
+    crs = await startMockCrs({ report: "missing-pull-type" });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const report = await orderCreditReport(liveConfig(crs.baseUrl), CONSENT);
+    expect(report.responseDetail?.creditPullType).toBeUndefined();
+    expect(warning).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledWith("[crs] creditPullType missing; accepted documented Experian prequalification config");
+  });
+
+  it.each([{ bureau: "transunion" as const }, { configName: "exp-standard-vantage4" }])(
+    "rejects missing pull-type metadata for an unapproved $bureau$configName context",
+    async (overrides) => {
+      crs = await startMockCrs({ report: "missing-pull-type" });
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const err = await rejection(orderCreditReport(liveConfigWith(crs.baseUrl, overrides), CONSENT));
+      expect(err.kind).toBe("not_soft_pull");
+    },
+  );
+
   it("carries Retry-After on a 429 without retrying", async () => {
     crs = await startMockCrs({ report: "429" });
     const err = await rejection(orderCreditReport(liveConfig(crs.baseUrl), CONSENT));
@@ -123,6 +143,12 @@ describe("checkReportOutcome", () => {
     report.errorMessages = [{ creditErrorMessageCode: "E2001" }];
     report.creditFiles = [{ creditFileDetail: { creditFileResultStatusType: "NoFileReturnedCreditFreeze" } }];
     expect(() => checkReportOutcome(report)).toThrowError(expect.objectContaining({ kind: "bureau_error" }) as never);
+  });
+
+  it("does not apply the documented-config fallback without matching context", () => {
+    const report = syntheticP05Report();
+    report.responseDetail = { dateRequested: "2026-10-24" };
+    expect(() => checkReportOutcome(report)).toThrowError(expect.objectContaining({ kind: "not_soft_pull" }) as never);
   });
 
   it("treats a report with no creditFiles status as invalid", () => {

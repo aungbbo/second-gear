@@ -170,7 +170,11 @@ export function mapCrsReport(
   const { tier, tierLabel, scoreRangeLabel, aprMin, aprMax } = classify(score);
 
   const tradelines = report.tradelines ?? [];
-  const asOf = parseCrsDate(report.responseDetail?.dateOrdered) ?? context.now ?? Date.now();
+  const asOf =
+    parseCrsDate(report.responseDetail?.dateOrdered) ??
+    parseCrsDate(report.responseDetail?.dateRequested) ??
+    context.now ??
+    Date.now();
 
   const bureauFactors: CreditFactor[] = (chosen.scoreFactors ?? [])
     .map((f) => f?.scoreFactorText?.trim())

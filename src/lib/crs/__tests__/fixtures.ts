@@ -21,6 +21,10 @@ export function liveConfig(baseUrl: string): LiveCrsConfig {
   };
 }
 
+export function liveConfigWith(baseUrl: string, overrides: Partial<Pick<LiveCrsConfig, "bureau" | "configName">>): LiveCrsConfig {
+  return { ...liveConfig(baseUrl), ...overrides };
+}
+
 /** Identity and account details that must never leave the server. */
 export const PII = [
   SYNTH_SSN,
@@ -51,7 +55,7 @@ export function expectNoLeaks(text: string, values: string[]) {
  */
 export function syntheticP05Report(): CrsCreditReportResponse & Record<string, unknown> {
   return {
-    responseDetail: { dateOrdered: "2026-10-24", creditPullType: "Soft", referenceNumber: "REF-SYNTH-0001", fileNumber: "FILE-SYNTH-9" } as never,
+    responseDetail: { dateRequested: "2026-10-24", creditPullType: "Soft", referenceNumber: "REF-SYNTH-0001", fileNumber: "FILE-SYNTH-9" } as never,
     errorMessages: null,
     creditFiles: [
       {

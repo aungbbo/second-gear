@@ -40,8 +40,10 @@ Without the role, calls fail with 401 `CRS111`.
 4. **Outcome checks** happen in this order, because CRS answers 200 even for failures:
    1. `errorMessages` (`E1005` means the wrong config or no access to the bureau)
    2. `creditFiles[].creditFileDetail` (no file, or a frozen file)
-   3. **`responseDetail.creditPullType` must be `"Soft"`.** Anything else is discarded and the pipeline stops
+   3. **`responseDetail.creditPullType` must be `"Soft"`.** The CalHacks sandbox's P05 response currently omits this field. The app accepts that omission only for the exact documented `experian` + `exp-prequal-vantage4` configuration, records the verification source internally as `documented-prequal-config`, and emits one sanitized server warning. An explicit value other than `"Soft"` (including `"Hard"`, `"soft"`, or `"Unknown"`) is always discarded; missing metadata for any other configuration is also discarded.
    4. `scores[]`: no numeric score means "couldn't be scored". A score is never invented.
+
+The sandbox also returns `responseDetail.dateRequested` where `dateOrdered` is absent. The mapper uses `dateOrdered` first and then `dateRequested` for report-relative calculations.
 
 ## What reaches the browser
 

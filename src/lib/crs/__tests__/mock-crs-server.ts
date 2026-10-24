@@ -9,7 +9,7 @@ import { syntheticP05Report } from "./fixtures";
  * outcomes in the body with HTTP 200, 401 CRS111, 429 CRS962 with Retry-After.
  */
 
-export type ReportMode = "ok" | "E1005" | "freeze" | "nohit" | "hard" | "noscore" | "401" | "429" | "500" | "html";
+export type ReportMode = "ok" | "missing-pull-type" | "E1005" | "freeze" | "nohit" | "hard" | "noscore" | "401" | "429" | "500" | "html";
 
 export interface MockCrsOptions {
   /** Answer every login with 401 CRS113. */
@@ -109,6 +109,9 @@ export async function startMockCrs(options: MockCrsOptions = {}): Promise<MockCr
         if (mode === "freeze") report.creditFiles = [{ creditFileDetail: { creditFileResultStatusType: "NoFileReturnedCreditFreeze" } }];
         if (mode === "nohit") report.creditFiles = [{ creditFileDetail: { creditFileResultStatusType: "NoFileReturnedNoHit" } }];
         if (mode === "hard") report.responseDetail = { ...report.responseDetail, creditPullType: "Hard" };
+        if (mode === "missing-pull-type") {
+          report.responseDetail = { dateRequested: "2026-10-24" };
+        }
         if (mode === "noscore") report.scores = [{ modelName: "VantageScore4.0", scoreValue: undefined, noScoreReasonType: "NotScoredInsufficientCredit" }];
         state.options.editReport?.(report);
         return send(200, report, { RequestID: "REQ-SYNTH-42" });

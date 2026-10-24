@@ -6,6 +6,13 @@ import type { CrsCreditReportResponse } from "@/lib/crs/types";
 
 export const REPORT_TIMEOUT_MS = 20_000;
 
+export type PullTypeVerification = "reported" | "documented-prequal-config";
+
+interface ReportValidationContext {
+  bureau: LiveCrsConfig["bureau"];
+  configName: string;
+}
+
 /** "POST /experian/credit-report/standard/:config" — never the host, config value, or ids. */
 export const describeReportEndpoint = (cfg: LiveCrsConfig) => `POST /${cfg.bureau}/credit-report/standard/:config`;
 
@@ -74,14 +81,18 @@ export async function orderCreditReport(cfg: LiveCrsConfig, consent: VerifiedCon
     throw new CrsError("invalid_response", CRS_UNAVAILABLE, { detail: `${endpoint}: body is not a report object` });
   }
 
-  return checkReportOutcome(json as CrsCreditReportResponse, endpoint);
+  return checkReportOutcome(json as CrsCreditReportResponse, endpoint, cfg);
 }
 
 /**
  * The guide's rule: read the outcome from the body, never the status. No
  * file, frozen file, validation errors, and a wrong config all arrive as 200.
  */
-export function checkReportOutcome(report: CrsCreditReportResponse, endpoint = "credit report"): CrsCreditReportResponse {
+export function checkReportOutcome(
+  report: CrsCreditReportResponse,
+  endpoint = "credit report",
+  context?: ReportValidationContext,
+): CrsCreditReportResponse {
   const errors = report.errorMessages ?? [];
   if (errors.length > 0) {
     const codes = errors.map((e) => e?.creditErrorMessageCode).filter(Boolean).join(",");
@@ -107,6 +118,20 @@ export function checkReportOutcome(report: CrsCreditReportResponse, endpoint = "
   }
 
   const pullType = report.responseDetail?.creditPullType;
+  const pullTypeVerification: PullTypeVerification | undefined = pullType === "Soft" ? "reported" : undefined;
+  if (pullTypeVerification) return report;
+
+  const missingPullType = pullType === undefined || pullType === null;
+  const documentedPrequalConfig =
+    missingPullType && context?.bureau === "experian" && context.configName === "exp-prequal-vantage4";
+  const fallbackVerification: PullTypeVerification | undefined = documentedPrequalConfig ? "documented-prequal-config" : undefined;
+  if (fallbackVerification) {
+    // The CalHacks sandbox omits creditPullType for this documented soft-pull config.
+    // Keep this warning free of response, identity, and request identifiers.
+    console.warn("[crs] creditPullType missing; accepted documented Experian prequalification config");
+    return report;
+  }
+
   if (pullType !== "Soft") {
     console.error(`[crs] refused a report whose creditPullType was ${pullType ?? "missing"}; nothing was used`);
     throw new CrsError("not_soft_pull", "We stopped: the credit check wasn't a soft pull.", {

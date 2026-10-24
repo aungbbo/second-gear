@@ -13,6 +13,7 @@ export interface CrsErrorMessage {
 
 export interface CrsResponseDetail {
   dateOrdered?: string;
+  dateRequested?: string;
   creditPullType?: string; // "Soft" | "Hard"
 }
 
