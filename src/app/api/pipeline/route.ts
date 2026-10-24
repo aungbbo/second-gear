@@ -4,7 +4,23 @@ import { pullSoftCredit } from "@/lib/providers/crs";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
 import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
+import { ApifyError, type ApifyErrorKind } from "@/lib/apify/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
+
+// A live Apify Actor run can take up to APIFY_RUN_TIMEOUT_SECS (at most 300 s).
+export const maxDuration = 300;
+
+const APIFY_ERROR_STATUS: Record<ApifyErrorKind, number> = {
+  config: 503,
+  auth: 502,
+  not_found: 502,
+  quota: 503,
+  rate_limited: 503,
+  timeout: 504,
+  upstream: 502,
+  invalid_response: 502,
+  no_listings: 422,
+};
 
 export async function POST(req: NextRequest) {
   let need: BuyerNeed;
@@ -52,7 +68,10 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    console.error("Pipeline failure", err);
+    console.error("Pipeline failure", err instanceof ApifyError ? `${err.name}[${err.kind}]: ${err.message}` : err);
+    if (err instanceof ApifyError) {
+      return NextResponse.json({ error: err.userMessage }, { status: APIFY_ERROR_STATUS[err.kind] });
+    }
     return NextResponse.json({ error: "The pipeline hit a snag. Try again." }, { status: 500 });
   }
 }

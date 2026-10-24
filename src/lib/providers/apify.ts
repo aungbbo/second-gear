@@ -1,88 +1,37 @@
-import { CAR_CATALOG, CITY_STATE, DEALER_NAMES } from "@/lib/catalog";
-import { principalForPayment } from "@/lib/calculations";
-import { SeededRandom } from "@/lib/random";
+import { runListingsActor } from "@/lib/apify/client";
+import { getApifyConfig } from "@/lib/apify/config";
+import { ApifyError } from "@/lib/apify/errors";
+import { mapListings } from "@/lib/apify/mapper";
+import { mockListings } from "@/lib/apify/mock";
+import { buildSearchInput } from "@/lib/apify/search";
 import type { AffordabilityResult, BuyerNeed, CarListing, CreditReport } from "@/lib/types";
 
-const CURRENT_YEAR = new Date().getFullYear();
-
 /**
- * Mock of an Apify Actor scraping live public used-car listings. Swap the
- * body for a real `call-actor` / dataset read once the Actor is deployed —
- * the output shape (CarListing[]) is the contract the rest of the pipeline
- * depends on.
+ * Step 3 — used-car listings near the buyer, priced to what their cash flow
+ * can carry. APIFY_MODE picks a live run of the AutoTrader listings Actor or
+ * the demo mock explicitly; a live failure throws an ApifyError and never
+ * falls back to mock listings.
  */
 export async function searchLiveListings(
   need: BuyerNeed,
   affordability: AffordabilityResult,
   credit: CreditReport,
 ): Promise<CarListing[]> {
-  await simulateLatency(700, 1100);
+  const cfg = getApifyConfig();
+  if (cfg.mode === "mock") return mockListings(need, affordability, credit);
 
-  const rand = new SeededRandom(`apify:${need.zip}:${need.description}`);
-  const midApr = (credit.estimatedApr.min + credit.estimatedApr.max) / 2;
-  const centerPrice = principalForPayment(affordability.maxSustainablePayment, midApr, 60);
-
-  const count = rand.int(9, 12);
-  const listings: CarListing[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const catalogEntry = rand.pick(CAR_CATALOG);
-    const trim = rand.pick(catalogEntry.trims);
-    const dealer = rand.pick(DEALER_NAMES);
-    const location = rand.pick(CITY_STATE);
-
-    // Spread listings from well under budget to clearly over budget so the
-    // true-cost pass downstream has real tradeoffs to rank.
-    const spread = rand.between(0.55, 1.6);
-    const age = rand.int(1, 8);
-    const basePrice = catalogEntry.basePriceNew * Math.pow(0.86, age);
-    const price = Math.round(((basePrice * 0.6 + centerPrice * spread * 0.4)) / 50) * 50;
-
-    const avgMiles = age * rand.between(9000, 14000);
-
-    listings.push({
-      id: `lst_${i}_${Math.round(rand.next() * 1e6)}`,
-      year: CURRENT_YEAR - age,
-      make: catalogEntry.make,
-      model: catalogEntry.model,
-      trim,
-      bodyStyle: catalogEntry.bodyStyle,
-      price: Math.max(5500, price),
-      mileage: Math.round(avgMiles / 500) * 500,
-      dealerName: dealer,
-      city: location.city,
-      state: location.state,
-      daysOnMarket: rand.int(2, 46),
-      mpgCombined: catalogEntry.mpgCombined,
-      reliabilityScore: catalogEntry.reliabilityScore,
-      vin: generateVin(rand),
-      accentHue: rand.int(0, 360),
+  const items = await runListingsActor(cfg, buildSearchInput(need, affordability, credit, cfg));
+  const { listings, stats } = mapListings(items);
+  // Counts only — never listing ids, VINs, seller details, or the token.
+  if (stats.mapped < stats.received) {
+    console.warn(
+      `[apify] kept ${stats.mapped}/${stats.received}: incomplete=${stats.incomplete} notUsed=${stats.notUsed} noMpg=${stats.noMpg} duplicates=${stats.duplicates}`,
+    );
+  }
+  if (listings.length === 0) {
+    throw new ApifyError("no_listings", "We couldn't find used cars for sale near your ZIP code in your price range.", {
+      detail: `received=${stats.received}`,
     });
   }
-
-  return dedupeByModel(listings);
-}
-
-function dedupeByModel(listings: CarListing[]): CarListing[] {
-  const seen = new Set<string>();
-  const result: CarListing[] = [];
-  for (const listing of listings) {
-    const key = `${listing.make}-${listing.model}-${listing.year}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(listing);
-  }
-  return result;
-}
-
-function generateVin(rand: SeededRandom): string {
-  const chars = "ABCDEFGHJKLMNPRSTUVWXYZ0123456789";
-  let vin = "";
-  for (let i = 0; i < 17; i++) vin += chars[rand.int(0, chars.length - 1)];
-  return vin;
-}
-
-function simulateLatency(minMs: number, maxMs: number) {
-  const ms = minMs + Math.random() * (maxMs - minMs);
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return listings;
 }
