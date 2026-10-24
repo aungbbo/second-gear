@@ -13,6 +13,10 @@ export const LIVE_CFG: LiveApifyConfig = {
   maxItems: 25,
   maxChargeUsd: 0.25,
   timeoutSecs: 120,
+  maxRunsPerHour: 10,
+  dailyBudgetUsd: 2,
+  maxConcurrentRuns: 2,
+  cacheTtlSecs: 900,
 };
 
 export const NEED: BuyerNeed = {
@@ -52,7 +56,7 @@ export function autotraderItem(overrides: Record<string, unknown> = {}): Record<
   return {
     listingId: "700000001",
     vin: "1hgcv1f30la000001",
-    url: "https://www.autotrader.com/cars-for-sale/vehicle/700000001",
+    url: "https://www.autotrader.com/cars-for-sale/vehicledetails.xhtml?listingId=700000001",
     title: "Used 2019 Honda Civic LX",
     year: 2019,
     make: "Honda",

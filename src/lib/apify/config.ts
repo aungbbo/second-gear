@@ -3,12 +3,19 @@ import { ApifyError } from "@/lib/apify/errors";
 export const DEFAULT_APIFY_BASE_URL = "https://api.apify.com/v2";
 /** The mapper is written against this Actor's declared dataset schema. */
 export const DEFAULT_LISTINGS_ACTOR_ID = "caffein.dev/autotrader-com-actor";
-/** Values the Actor's `searchRadius` input accepts (0 means nationwide, which we never want). */
-export const SEARCH_RADIUS_OPTIONS = ["10", "25", "50", "75", "100", "200", "300", "400", "500"] as const;
+/**
+ * Radii both the Actor's input schema and its README list. The schema also
+ * accepts 75, 300 and 400, but the README omits them, so they are left out
+ * until a run shows AutoTrader honours them. `0` (nationwide) is never used.
+ */
+export const SEARCH_RADIUS_OPTIONS = ["10", "25", "50", "100", "200", "500"] as const;
 export type SearchRadius = (typeof SEARCH_RADIUS_OPTIONS)[number];
 
-/** Apify's synchronous run endpoint gives up after 300 s. */
-const MAX_SYNC_TIMEOUT_SECS = 300;
+/**
+ * Keeps the whole step (start, polling, abort, dataset read) inside the
+ * pipeline route's 300 s `maxDuration`.
+ */
+const MAX_RUN_TIMEOUT_SECS = 240;
 const MAX_ITEMS_CEILING = 100;
 const MAX_CHARGE_CEILING_USD = 5;
 
@@ -21,17 +28,32 @@ export interface LiveApifyConfig {
   maxItems: number;
   maxChargeUsd: number;
   timeoutSecs: number;
+  /** Cost guard: started runs per rolling hour. */
+  maxRunsPerHour: number;
+  /** Cost guard: worst-case spend (maxChargeUsd per started run) per rolling 24 h. */
+  dailyBudgetUsd: number;
+  /** Cost guard: runs in flight at once. */
+  maxConcurrentRuns: number;
+  /** Identical searches within this window reuse the last result; 0 disables. */
+  cacheTtlSecs: number;
 }
 
 export type ApifyConfig = { mode: "mock" } | LiveApifyConfig;
 
 const configError = (detail: string) => new ApifyError("config", `Listings provider not configured: ${detail}.`);
 
-function intSetting(env: Record<string, string | undefined>, name: string, fallback: number, max: number): number {
+function intSetting(env: Record<string, string | undefined>, name: string, fallback: number, max: number, min = 1): number {
   const raw = env[name]?.trim();
   if (!raw) return fallback;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1 || n > max) throw configError(`${name} must be an integer from 1 to ${max}`);
+  if (!Number.isInteger(n) || n < min || n > max) throw configError(`${name} must be an integer from ${min} to ${max}`);
+  return n;
+}
+
+function usdSetting(env: Record<string, string | undefined>, name: string, fallback: number, max: number): number {
+  const raw = env[name]?.trim();
+  const n = raw ? Number(raw) : fallback;
+  if (!Number.isFinite(n) || n <= 0 || n > max) throw configError(`${name} must be a number above 0 and at most ${max}`);
   return n;
 }
 
@@ -57,11 +79,9 @@ export function getApifyConfig(env: Record<string, string | undefined> = process
     throw configError(`APIFY_SEARCH_RADIUS_MILES must be one of ${SEARCH_RADIUS_OPTIONS.join(", ")}`);
   }
 
-  const chargeRaw = env.APIFY_MAX_CHARGE_USD?.trim();
-  const maxChargeUsd = chargeRaw ? Number(chargeRaw) : 0.25;
-  if (!Number.isFinite(maxChargeUsd) || maxChargeUsd <= 0 || maxChargeUsd > MAX_CHARGE_CEILING_USD) {
-    throw configError(`APIFY_MAX_CHARGE_USD must be a number above 0 and at most ${MAX_CHARGE_CEILING_USD}`);
-  }
+  const maxChargeUsd = usdSetting(env, "APIFY_MAX_CHARGE_USD", 0.25, MAX_CHARGE_CEILING_USD);
+  const dailyBudgetUsd = usdSetting(env, "APIFY_DAILY_BUDGET_USD", 2, 100);
+  if (dailyBudgetUsd < maxChargeUsd) throw configError("APIFY_DAILY_BUDGET_USD must be at least APIFY_MAX_CHARGE_USD");
 
   return {
     mode: "live",
@@ -71,6 +91,10 @@ export function getApifyConfig(env: Record<string, string | undefined> = process
     searchRadius: radius as SearchRadius,
     maxItems: intSetting(env, "APIFY_MAX_ITEMS", 25, MAX_ITEMS_CEILING),
     maxChargeUsd,
-    timeoutSecs: intSetting(env, "APIFY_RUN_TIMEOUT_SECS", 120, MAX_SYNC_TIMEOUT_SECS),
+    timeoutSecs: intSetting(env, "APIFY_RUN_TIMEOUT_SECS", 120, MAX_RUN_TIMEOUT_SECS),
+    maxRunsPerHour: intSetting(env, "APIFY_MAX_RUNS_PER_HOUR", 10, 1000),
+    dailyBudgetUsd,
+    maxConcurrentRuns: intSetting(env, "APIFY_MAX_CONCURRENT_RUNS", 2, 10),
+    cacheTtlSecs: intSetting(env, "APIFY_CACHE_TTL_SECS", 900, 86_400, 0),
   };
 }

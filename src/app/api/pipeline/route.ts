@@ -20,6 +20,7 @@ const APIFY_ERROR_STATUS: Record<ApifyErrorKind, number> = {
   upstream: 502,
   invalid_response: 502,
   no_listings: 422,
+  budget: 429,
 };
 
 export async function POST(req: NextRequest) {
@@ -70,7 +71,8 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("Pipeline failure", err instanceof ApifyError ? `${err.name}[${err.kind}]: ${err.message}` : err);
     if (err instanceof ApifyError) {
-      return NextResponse.json({ error: err.userMessage }, { status: APIFY_ERROR_STATUS[err.kind] });
+      const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
+      return NextResponse.json({ error: err.userMessage }, { status: APIFY_ERROR_STATUS[err.kind], headers });
     }
     return NextResponse.json({ error: "The pipeline hit a snag. Try again." }, { status: 500 });
   }

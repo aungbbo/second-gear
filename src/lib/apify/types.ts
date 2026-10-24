@@ -20,6 +20,7 @@ export interface AutotraderSearchInput {
 export interface AutotraderListingItem {
   listingId?: unknown;
   vin?: unknown;
+  url?: unknown;
   title?: unknown;
   year?: unknown;
   make?: unknown;

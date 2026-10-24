@@ -60,6 +60,8 @@ export interface CarListing {
   reliabilityScore: number;
   vin: string;
   accentHue: number;
+  /** Seller's listing page, when the source provides one (live listings only). */
+  listingUrl?: string;
 }
 
 export interface LoanScenario {

@@ -10,7 +10,7 @@ export interface MapStats {
   mapped: number;
   /** Missing an id, year, make, model, price, mileage, or seller location. */
   incomplete: number;
-  /** New-car listings; the app compares used cars only. */
+  /** New-car or unrecognised listing types; the app compares used and certified pre-owned cars only. */
   notUsed: number;
   /** No MPG from the listing or the catalog, so it can't be ranked honestly. */
   noMpg: number;
@@ -26,10 +26,44 @@ function catalogEntry(make: string, model: string) {
   return CAR_CATALOG.find((c) => norm(c.make) === norm(make) && norm(c.model) === norm(model));
 }
 
-/** EPA weights combined fuel economy 55% city, 45% highway (harmonic mean). */
+/**
+ * EPA weights combined fuel economy 55% city, 45% highway (harmonic mean).
+ * With only one figure listed, the city figure stands in (the lower, more
+ * conservative one); a highway-only figure is too optimistic to use.
+ */
 export function combinedMpg(city: number | undefined, highway: number | undefined): number | undefined {
-  if (!city || !highway || city <= 0 || highway <= 0) return undefined;
-  return Math.round(1 / (0.55 / city + 0.45 / highway));
+  const c = city !== undefined && city > 0 ? city : undefined;
+  const h = highway !== undefined && highway > 0 ? highway : undefined;
+  if (c && h) return Math.round(1 / (0.55 / c + 0.45 / h));
+  return c ? Math.round(c) : undefined;
+}
+
+/** Listing types AutoTrader uses for used cars: plain used, manufacturer CPO, third-party certified. */
+const USED_TYPES = new Set(["USED", "CERTIFIED", "3P_CERT"]);
+
+/**
+ * Used or certified pre-owned only. A missing type falls back to the title
+ * prefix AutoTrader uses ("Used …", "Certified …", "New …").
+ */
+export function isUsedListing(listingType: string | undefined, title: string | undefined): boolean {
+  if (listingType) return USED_TYPES.has(listingType.toUpperCase());
+  return !/^new\b/i.test(title ?? "");
+}
+
+/** Only an https link to AutoTrader itself is passed to the browser. */
+export function safeListingUrl(value: unknown): string | undefined {
+  const raw = str(value);
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "https:" || !(host === "autotrader.com" || host.endsWith(".autotrader.com"))) return undefined;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 /** Catalog score for the model, else the make's average, else neutral. */
@@ -80,7 +114,7 @@ export function mapListings(items: unknown[]): { listings: CarListing[]; stats: 
       stats.incomplete++;
       continue;
     }
-    if (str(item.listingType)?.toUpperCase() === "NEW") {
+    if (!isUsedListing(str(item.listingType), str(item.title))) {
       stats.notUsed++;
       continue;
     }
@@ -100,6 +134,7 @@ export function mapListings(items: unknown[]): { listings: CarListing[]; stats: 
     if (vin) seenVins.add(vin);
 
     const days = num(item.daysOnSite);
+    const listingUrl = safeListingUrl(item.url);
     listings.push({
       id: `at_${listingId}`,
       year,
@@ -118,6 +153,7 @@ export function mapListings(items: unknown[]): { listings: CarListing[]; stats: 
       reliabilityScore: reliabilityFor(make, model),
       vin,
       accentHue: hueFor(listingId),
+      ...(listingUrl ? { listingUrl } : {}),
     });
   }
 

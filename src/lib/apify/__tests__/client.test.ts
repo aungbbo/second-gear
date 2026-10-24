@@ -2,18 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runListingsActor } from "@/lib/apify/client";
 import { ApifyError, scrubDetail } from "@/lib/apify/errors";
 import { buildSearchInput } from "@/lib/apify/search";
+import { fakeApify } from "./fake-apify";
 import { AFFORDABILITY, autotraderItem, CREDIT, LIVE_CFG, NEED, TEST_TOKEN } from "./fixtures";
 
 const INPUT = buildSearchInput(NEED, AFFORDABILITY, CREDIT, LIVE_CFG);
-
-function stubFetch(impl: (url: string, init: RequestInit) => Promise<Response> | Response) {
-  const fn = vi.fn(impl);
-  vi.stubGlobal("fetch", fn);
-  return fn;
-}
-
-const json = (body: unknown, status = 201) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 async function failure(promise: Promise<unknown>): Promise<ApifyError> {
   try {
@@ -26,42 +18,104 @@ async function failure(promise: Promise<unknown>): Promise<ApifyError> {
   throw new Error("expected an ApifyError");
 }
 
+/** Makes the client's clock jump `stepMs` on every read, so deadlines pass without waiting. */
+function fastClock(stepMs: number) {
+  let t = 1_000_000;
+  vi.spyOn(Date, "now").mockImplementation(() => (t += stepMs));
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("runListingsActor", () => {
-  it("runs the Actor synchronously with caps, the token only in the header", async () => {
-    const fetchMock = stubFetch(() => json([autotraderItem()]));
+  it("starts a capped run, then reads its dataset; the token only in the header", async () => {
+    const { calls } = fakeApify({ items: [autotraderItem()] });
 
-    const items = await runListingsActor(LIVE_CFG, INPUT);
+    const result = await runListingsActor(LIVE_CFG, INPUT);
 
-    expect(items).toHaveLength(1);
-    const [url, init] = fetchMock.mock.calls[0];
-    const parsed = new URL(url);
-    expect(parsed.origin + parsed.pathname).toBe(
-      "https://api.apify.test/v2/acts/caffein.dev~autotrader-com-actor/run-sync-get-dataset-items",
-    );
-    expect(Object.fromEntries(parsed.searchParams)).toEqual({
+    expect(result).toEqual({ items: [autotraderItem()], partial: false, status: "SUCCEEDED" });
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      "POST /acts/caffein.dev~autotrader-com-actor/runs",
+      "GET /datasets/ds1/items",
+    ]);
+    const start = new URL(calls[0].url);
+    expect(Object.fromEntries(start.searchParams)).toEqual({
       timeout: "120",
       maxItems: "25",
       maxTotalChargeUsd: "0.25",
-      format: "json",
-      clean: "true",
+      waitForFinish: "60",
     });
-    expect(url).not.toContain(TEST_TOKEN);
-    expect(init.method).toBe("POST");
-    expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${TEST_TOKEN}`);
-    expect(JSON.parse(init.body as string)).toEqual(INPUT);
+    expect(JSON.parse(calls[0].init.body as string)).toEqual(INPUT);
+    expect(Object.fromEntries(new URL(calls[1].url).searchParams)).toEqual({ format: "json", clean: "true", limit: "25" });
+    for (const call of calls) {
+      expect(call.url).not.toContain(TEST_TOKEN);
+      expect((call.init.headers as Record<string, string>).authorization).toBe(`Bearer ${TEST_TOKEN}`);
+    }
   });
 
-  it("makes exactly one call, even on failure", async () => {
-    const fetchMock = stubFetch(() => json({ error: { type: "internal-server-error" } }, 500));
+  it("polls a running run until it finishes", async () => {
+    const { calls } = fakeApify({ statuses: ["RUNNING", "RUNNING", "SUCCEEDED"], items: [autotraderItem()] });
+
+    const result = await runListingsActor(LIVE_CFG, INPUT);
+
+    expect(result.partial).toBe(false);
+    expect(calls.filter((c) => c.path === "/actor-runs/run1")).toHaveLength(2);
+    expect(new URL(calls[1].url).searchParams.get("waitForFinish")).toBe("60");
+  });
+
+  it("returns partial items when Apify's own run timeout hits", async () => {
+    fakeApify({ statuses: ["RUNNING", "TIMED-OUT"], items: [autotraderItem()] });
+    const result = await runListingsActor(LIVE_CFG, INPUT);
+    expect(result).toMatchObject({ partial: true, status: "TIMED-OUT" });
+    expect(result.items).toHaveLength(1);
+  });
+
+  it("aborts a run still going at the deadline, which stops charges, and keeps what it collected", async () => {
+    fastClock(30_000);
+    const { calls } = fakeApify({ statuses: ["RUNNING"], items: [autotraderItem()] });
+
+    const result = await runListingsActor(LIVE_CFG, INPUT);
+
+    expect(calls.some((c) => c.method === "POST" && c.path === "/actor-runs/run1/abort")).toBe(true);
+    expect(result).toMatchObject({ partial: true, status: "ABORTED" });
+  });
+
+  it("still reads the dataset if the abort request itself fails", async () => {
+    fastClock(30_000);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    fakeApify({
+      statuses: ["RUNNING"],
+      items: [autotraderItem()],
+      override: (method, path) => (path.endsWith("/abort") ? new Response("{}", { status: 500 }) : undefined),
+    });
+    expect((await runListingsActor(LIVE_CFG, INPUT)).partial).toBe(true);
+  });
+
+  it("fails with timeout when a timed-out run collected nothing", async () => {
+    fakeApify({ statuses: ["TIMED-OUT"], items: [] });
+    const err = await failure(runListingsActor(LIVE_CFG, INPUT));
+    expect(err.kind).toBe("timeout");
+    expect(err.userMessage).toMatch(/took too long/);
+  });
+
+  it("fails with upstream when the run failed or someone else aborted it", async () => {
+    fakeApify({ statuses: ["FAILED"], items: [autotraderItem()] });
+    expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("upstream");
+
+    fakeApify({ statuses: ["RUNNING", "ABORTED"], items: [autotraderItem()] });
+    expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("upstream");
+  });
+
+  it("starts exactly one run, even on failure", async () => {
+    const { calls } = fakeApify({ startError: { status: 500, type: "internal-server-error" } });
     await failure(runListingsActor(LIVE_CFG, INPUT));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
   });
 
   it.each([
+    [400, "upstream"],
     [401, "auth"],
     [403, "auth"],
     [402, "quota"],
@@ -71,7 +125,7 @@ describe("runListingsActor", () => {
     [500, "upstream"],
     [503, "upstream"],
   ])("maps HTTP %i to %s", async (status, kind) => {
-    stubFetch(() => json({ error: { type: "some-error", message: `token ${TEST_TOKEN} rejected` } }, status));
+    fakeApify({ startError: { status, type: "some-error", message: `token ${TEST_TOKEN} rejected` } });
     const err = await failure(runListingsActor(LIVE_CFG, INPUT));
     expect(err.kind).toBe(kind);
     expect(err.status).toBe(status);
@@ -79,29 +133,31 @@ describe("runListingsActor", () => {
   });
 
   it("maps a non-JSON error body by status", async () => {
-    stubFetch(() => new Response("<html>bad gateway</html>", { status: 502 }));
+    fakeApify({ override: () => new Response("<html>bad gateway</html>", { status: 502 }) });
     expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("upstream");
   });
 
-  it("rejects a 2xx body that isn't JSON or isn't an array", async () => {
-    stubFetch(() => new Response("not json", { status: 201 }));
-    expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("invalid_response");
-
-    stubFetch(() => json({ items: [] }));
+  it("rejects a run object without id, status, or dataset id", async () => {
+    fakeApify({ override: (m) => (m === "POST" ? new Response(JSON.stringify({ data: { id: "run1" } }), { status: 201 }) : undefined) });
     expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("invalid_response");
   });
 
-  it("maps an aborted request to timeout", async () => {
-    stubFetch(() => {
+  it("rejects dataset items that aren't an array", async () => {
+    fakeApify({ items: { items: [] } });
+    expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("invalid_response");
+  });
+
+  it("maps a request that gets no response to timeout", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
       throw Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
-    });
+    }));
     expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("timeout");
   });
 
   it("maps a network error to upstream without leaking the URL", async () => {
-    stubFetch(() => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
       throw new TypeError(`fetch failed for https://api.apify.test/v2/acts?token=${TEST_TOKEN}`);
-    });
+    }));
     const err = await failure(runListingsActor(LIVE_CFG, INPUT));
     expect(err.kind).toBe("upstream");
     expect(err.message).not.toContain("api.apify.test");

@@ -7,7 +7,9 @@ export type ApifyErrorKind =
   | "timeout"
   | "upstream"
   | "invalid_response"
-  | "no_listings";
+  | "no_listings"
+  /** The app's own cost guard refused to start another paid run. */
+  | "budget";
 
 /** Apify API tokens start with `apify_api_`; strip them wherever they appear. */
 const TOKEN = /\bapify_api_[A-Za-z0-9]+/g;
@@ -33,14 +35,22 @@ export class ApifyError extends Error {
   readonly kind: ApifyErrorKind;
   readonly status?: number;
   readonly userMessage: string;
+  readonly retryAfterSeconds?: number;
 
-  constructor(kind: ApifyErrorKind, userMessage: string, options: { status?: number; detail?: string } = {}) {
+  constructor(
+    kind: ApifyErrorKind,
+    userMessage: string,
+    options: { status?: number; detail?: string; retryAfterSeconds?: number } = {},
+  ) {
     super(options.detail ? `${userMessage} (${scrubDetail(options.detail)})` : userMessage);
     this.name = "ApifyError";
     this.kind = kind;
     this.status = options.status;
     this.userMessage = userMessage;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
 export const LISTINGS_UNAVAILABLE = "We couldn't load live car listings right now. Try again in a few minutes.";
+export const LISTINGS_TIMEOUT = "The live car search took too long. Try again in a few minutes.";
+export const LISTINGS_BUSY = "Live car search is busy right now. Try again in a little while.";

@@ -40,6 +40,10 @@ describe("getApifyConfig", () => {
       maxItems: 25,
       maxChargeUsd: 0.25,
       timeoutSecs: 120,
+      maxRunsPerHour: 10,
+      dailyBudgetUsd: 2,
+      maxConcurrentRuns: 2,
+      cacheTtlSecs: 900,
     });
   });
 
@@ -51,7 +55,11 @@ describe("getApifyConfig", () => {
         APIFY_SEARCH_RADIUS_MILES: "100",
         APIFY_MAX_ITEMS: "10",
         APIFY_MAX_CHARGE_USD: "0.1",
-        APIFY_RUN_TIMEOUT_SECS: "300",
+        APIFY_RUN_TIMEOUT_SECS: "240",
+        APIFY_MAX_RUNS_PER_HOUR: "3",
+        APIFY_DAILY_BUDGET_USD: "1",
+        APIFY_MAX_CONCURRENT_RUNS: "1",
+        APIFY_CACHE_TTL_SECS: "0",
       }),
     );
     expect(cfg).toMatchObject({
@@ -60,23 +68,42 @@ describe("getApifyConfig", () => {
       searchRadius: "100",
       maxItems: 10,
       maxChargeUsd: 0.1,
-      timeoutSecs: 300,
+      timeoutSecs: 240,
+      maxRunsPerHour: 3,
+      dailyBudgetUsd: 1,
+      maxConcurrentRuns: 1,
+      cacheTtlSecs: 0,
     });
   });
 
   it.each([
     ["APIFY_SEARCH_RADIUS_MILES", "0"],
     ["APIFY_SEARCH_RADIUS_MILES", "60"],
+    // In the input schema but not the README; excluded until verified.
+    ["APIFY_SEARCH_RADIUS_MILES", "75"],
+    ["APIFY_SEARCH_RADIUS_MILES", "300"],
     ["APIFY_MAX_ITEMS", "0"],
     ["APIFY_MAX_ITEMS", "101"],
     ["APIFY_MAX_ITEMS", "2.5"],
     ["APIFY_MAX_CHARGE_USD", "0"],
     ["APIFY_MAX_CHARGE_USD", "6"],
     ["APIFY_MAX_CHARGE_USD", "lots"],
-    ["APIFY_RUN_TIMEOUT_SECS", "301"],
+    // Must leave room inside the route's 300 s maxDuration.
+    ["APIFY_RUN_TIMEOUT_SECS", "241"],
+    ["APIFY_MAX_RUNS_PER_HOUR", "0"],
+    ["APIFY_DAILY_BUDGET_USD", "0"],
+    ["APIFY_DAILY_BUDGET_USD", "101"],
+    ["APIFY_MAX_CONCURRENT_RUNS", "11"],
+    ["APIFY_CACHE_TTL_SECS", "-1"],
     ["APIFY_LISTINGS_ACTOR_ID", "not an actor"],
   ])("rejects %s=%s instead of falling back to a default", (name, value) => {
     expect(configError(live({ [name]: value })).userMessage).toContain(name);
+  });
+
+  it("requires the daily budget to fit at least one run", () => {
+    expect(configError(live({ APIFY_MAX_CHARGE_USD: "1", APIFY_DAILY_BUDGET_USD: "0.5" })).userMessage).toContain(
+      "APIFY_DAILY_BUDGET_USD must be at least APIFY_MAX_CHARGE_USD",
+    );
   });
 
   it("never puts the token in an error message", () => {

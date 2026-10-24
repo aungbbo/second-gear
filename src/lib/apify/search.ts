@@ -20,6 +20,12 @@ const MAKES = [
 ];
 const MAKE_ALIASES: Record<string, string> = { chevy: "Chevrolet", vw: "Volkswagen", mercedes: "Mercedes-Benz" };
 
+/**
+ * Codes from the Actor's input schema enum (latest build), which Apify
+ * validates run input against: SUVCROSS "SUV / Crossover", TRUCKS "Truck",
+ * VANMV "Van / Minivan". The README's table lists SUV/TRUCK/VAN/MINIVAN, which
+ * the schema doesn't accept.
+ */
 const BODY_STYLES: [RegExp, NonNullable<AutotraderSearchInput["vehicleStyleCode"]>][] = [
   [/\b(suv|crossover)s?\b/, "SUVCROSS"],
   [/\b(truck|pickup)s?\b/, "TRUCKS"],
@@ -74,8 +80,11 @@ export function buildSearchInput(
   const style = BODY_STYLES.find(([pattern]) => pattern.test(text));
   if (style) input.vehicleStyleCode = style[1];
 
+  // Schema codes: HYB "Hybrid", ELE "Electric" (the README's ELC isn't in the enum).
   if (/\bhybrids?\b/.test(text)) input.fuelTypeGroup = "HYB";
   else if (/\b(electric|ev)s?\b/.test(text)) input.fuelTypeGroup = "ELE";
 
+  // `listingType` stays unset: it takes one value, and USED alone may leave out
+  // certified pre-owned cars (CERTIFIED, 3P_CERT). New cars are dropped by the mapper.
   return input;
 }

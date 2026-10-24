@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, TriangleAlert } from "lucide-react";
+import { ChevronDown, ExternalLink, TriangleAlert } from "lucide-react";
 import { CarSwatch } from "@/components/CarSwatch";
 import type { RankedCar } from "@/lib/types";
 
@@ -72,6 +72,19 @@ export function CarRow({ car }: CarRowProps) {
       {open && (
         <div className="pb-7 pl-11 pr-2">
           <p className="text-[0.95rem] leading-relaxed text-ink-soft max-w-2xl">{car.explanation}</p>
+
+          {listing.listingUrl && (
+            <a
+              href={listing.listingUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium underline underline-offset-4 hover:text-ink-soft"
+            >
+              View listing
+              <ExternalLink className="w-3.5 h-3.5" aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          )}
 
           {warnings.length > 1 && (
             <ul className="mt-3 space-y-1.5">

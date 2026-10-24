@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { fakeApify, type FakeApifyOptions } from "@/lib/apify/__tests__/fake-apify";
 import { AFFORDABILITY, autotraderItem, CREDIT, NEED, TEST_TOKEN } from "@/lib/apify/__tests__/fixtures";
+import { __resetApifyGuardForTests } from "@/lib/apify/guard";
 
 // Credit, cash flow and ranking are other integrations; stub them so these tests cover listings only.
 vi.mock("@/lib/providers/crs", () => ({ pullSoftCredit: vi.fn(async () => CREDIT) }));
@@ -8,21 +10,22 @@ vi.mock("@/lib/providers/nessie", () => ({ analyzeCashFlow: vi.fn(async () => AF
 
 const { POST } = await import("./route");
 
-const request = () =>
+const request = (need = NEED) =>
   new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ need: NEED }),
+    body: JSON.stringify({ need }),
   });
 
-function goLive(response: Response) {
+function goLive(options: FakeApifyOptions) {
   vi.stubEnv("APIFY_MODE", "live");
   vi.stubEnv("APIFY_API_TOKEN", TEST_TOKEN);
   vi.stubEnv("APIFY_BASE_URL", "https://api.apify.test/v2");
-  vi.stubGlobal("fetch", vi.fn(async () => response));
+  fakeApify(options);
 }
 
 beforeEach(() => {
+  __resetApifyGuardForTests();
   vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "warn").mockImplementation(() => {});
 });
@@ -43,13 +46,16 @@ describe("POST /api/pipeline — listings", () => {
     expect(body.rankedCars.length).toBeGreaterThan(0);
   });
 
-  it("runs end to end on live listings", async () => {
-    goLive(new Response(JSON.stringify([autotraderItem()]), { status: 201 }));
+  it("runs end to end on live listings and carries the listing link to the ranked cars", async () => {
+    goLive({ items: [autotraderItem()] });
     const res = await POST(request());
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.listings.map((l: { id: string }) => l.id)).toEqual(["at_700000001"]);
-    expect(body.rankedCars[0].listing.id).toBe("at_700000001");
+    expect(body.rankedCars[0].listing).toMatchObject({
+      id: "at_700000001",
+      listingUrl: "https://www.autotrader.com/cars-for-sale/vehicledetails.xhtml?listingId=700000001",
+    });
   });
 
   it("answers 503 when APIFY_MODE is unset", async () => {
@@ -66,18 +72,36 @@ describe("POST /api/pipeline — listings", () => {
     [429, 503],
     [500, 502],
   ])("maps Apify HTTP %i to %i with a buyer-safe message", async (upstream, status) => {
-    goLive(new Response(JSON.stringify({ error: { type: "x", message: TEST_TOKEN } }), { status: upstream }));
+    goLive({ startError: { status: upstream, type: "x", message: TEST_TOKEN } });
     const res = await POST(request());
     expect(res.status).toBe(status);
     const text = await res.text();
-    expect(text).toContain("We couldn't load live car listings");
+    expect(text).toMatch(/We couldn't load live car listings|took too long/);
     expect(text).not.toContain(TEST_TOKEN);
   });
 
+  it("answers 504 when a timed-out run collected nothing", async () => {
+    goLive({ statuses: ["TIMED-OUT"], items: [] });
+    const res = await POST(request());
+    expect(res.status).toBe(504);
+    expect((await res.json()).error).toMatch(/took too long/);
+  });
+
   it("answers 422 when no listing is usable, never with mock cars", async () => {
-    goLive(new Response(JSON.stringify([]), { status: 201 }));
+    goLive({ items: [] });
     const res = await POST(request());
     expect(res.status).toBe(422);
     expect((await res.json()).listings).toBeUndefined();
+  });
+
+  it("answers 429 with Retry-After once the cost guard refuses a run", async () => {
+    goLive({ items: [autotraderItem()] });
+    vi.stubEnv("APIFY_MAX_RUNS_PER_HOUR", "1");
+    expect((await POST(request())).status).toBe(200);
+
+    const res = await POST(request({ ...NEED, zip: "10001" }));
+    expect(res.status).toBe(429);
+    expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect((await res.json()).error).toMatch(/busy/);
   });
 });

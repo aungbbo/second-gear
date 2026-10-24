@@ -22,6 +22,9 @@ describe.skipIf(process.env.APIFY_LIVE_TEST !== "1")("Apify listings Actor (live
       expect(l.mileage).toBeGreaterThanOrEqual(0);
       expect(l.mpgCombined).toBeGreaterThan(0);
       expect(l.city && l.state).toBeTruthy();
+      if (l.listingUrl !== undefined) expect(l.listingUrl).toMatch(/^https:\/\/([a-z0-9-]+\.)*autotrader\.com\//);
     }
+    // Prints only counts and the shape the mapper relies on, no listing details.
+    console.log(`[apify live] ${listings.length} listings, ${listings.filter((l) => l.listingUrl).length} with links`);
   });
 });
