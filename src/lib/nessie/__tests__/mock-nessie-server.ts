@@ -20,6 +20,8 @@ export interface MockNessieOptions {
   failPost?: { nth: number; status: number; body: unknown; raw?: boolean };
   /** Drop the connection on the Nth POST (1-based) without responding. */
   dropPost?: number;
+  /** Extra fields the bill list demands, to simulate a sandbox whose Bill schema grew. */
+  extraBillListFields?: string[];
   /** Store every transaction's status as this value, like a sandbox that rewrites it. */
   rewriteStatus?: string;
   /** Called after each POST is stored, with the running count. */
@@ -49,6 +51,24 @@ const STATUS_RULES: Record<string, { required: boolean; allowed: string[]; schem
   purchases: { required: false, allowed: ["pending", "cancelled", "completed", "executed", "recurring"], schema: "PurchaseCreate" },
   bills: { required: true, allowed: ["pending", "cancelled", "completed", "recurring"], schema: "BillCreate" },
 };
+
+/**
+ * The live sandbox validates every bill when it lists them: one bill stored
+ * without these fields makes GET /accounts/:id/bills (and /customers/:id/bills)
+ * answer 400 for the whole collection, even though POST accepted it.
+ */
+const BILL_LIST_REQUIRED = ["recurring_date", "upcoming_payment_date"];
+
+function billListError(bills: Record<string, unknown>[], required: string[]): string | null {
+  for (const bill of bills) {
+    const missing = required.filter((field) => bill[field] === undefined || bill[field] === null);
+    if (missing.length > 0) {
+      const lines = missing.map((field) => `${field}\n  field required (type=value_error.missing)`).join("\n");
+      return `${missing.length} validation error${missing.length > 1 ? "s" : ""} for Bill\n${lines}`;
+    }
+  }
+  return null;
+}
 
 /** Mirrors the sandbox's validation reply: a 400 whose JSON body is a bare string. */
 function statusError(resource: string, body: Record<string, unknown>): string | null {
@@ -120,7 +140,11 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
       }
       if (parts[0] === "accounts" && RESOURCES.includes(parts[2] as (typeof RESOURCES)[number])) {
         if (parts[2] === "loans" && options.loansNotFound) return send(res, 404, { code: 404, message: "Not found" });
-        return send(res, 200, state.records[parts[2]].filter((r) => r.account_id === parts[1]));
+        const listed = state.records[parts[2]].filter((r) => r.account_id === parts[1]);
+        const invalid =
+          parts[2] === "bills" ? billListError(listed, [...BILL_LIST_REQUIRED, ...(options.extraBillListFields ?? [])]) : null;
+        if (invalid) return send(res, 400, invalid);
+        return send(res, 200, listed);
       }
       return send(res, 404, { code: 404, message: "Not found" });
     }

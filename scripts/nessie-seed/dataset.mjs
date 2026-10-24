@@ -13,7 +13,8 @@ export const SEED_MARKER = "sg-seed:";
  * valid for deposits, withdrawals, and purchases alike.
  */
 export const TRANSACTION_STATUS = "completed";
-export const DEFAULT_PERSONA = "sg-demo-subprime-01";
+// sg-demo-subprime-01 is a broken partial seed in the sandbox (see docs/nessie-sandbox.md).
+export const DEFAULT_PERSONA = "sg-demo-subprime-02";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -28,6 +29,21 @@ export function isoDay(asOf, daysAgo) {
   if (!match) throw new Error(`asOf must be YYYY-MM-DD, got "${asOf}"`);
   const base = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
   return new Date(base - daysAgo * DAY_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * For a bill due on `dayOfMonth` (1–28), the most recent due date on or
+ * before `asOf` and the next one after it.
+ * @param {string} asOf `YYYY-MM-DD`
+ * @param {number} dayOfMonth
+ */
+export function monthlyDueDates(asOf, dayOfMonth) {
+  const [y, m, d] = asOf.split("-").map(Number);
+  const iso = (/** @type {number} */ year, /** @type {number} */ month) =>
+    new Date(Date.UTC(year, month - 1, dayOfMonth)).toISOString().slice(0, 10);
+  const last = d >= dayOfMonth ? iso(y, m) : iso(y, m - 1);
+  const next = d >= dayOfMonth ? iso(y, m + 1) : iso(y, m);
+  return { last, next };
 }
 
 /** @typedef {"checking" | "savings" | "card"} AccountKey */
@@ -92,15 +108,31 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
     [42, 110],
     [72, 88],
   ]);
+  // The live sandbox accepts a bill without recurring_date, then fails to list
+  // the account's bills ("validation errors for Bill: recurring_date,
+  // upcoming_payment_date field required"), so every bill carries both.
+  // Recurring bills: recurring_date is the due day, payment_date the last due
+  // date, upcoming_payment_date the next real one. One-off bills follow the
+  // SDK's convention of recurring_date 0, with upcoming_payment_date equal to
+  // the date already paid, so no future obligation is invented.
+  const recurring = (/** @type {string} */ payee, /** @type {string} */ label, /** @type {number} */ dueDay, /** @type {number} */ amount) => {
+    const { last, next } = monthlyDueDates(asOf, dueDay);
+    return {
+      account: /** @type {AccountKey} */ ("checking"),
+      body: {
+        status: "recurring",
+        payee,
+        nickname: tag(label),
+        payment_date: last,
+        recurring_date: dueDay,
+        upcoming_payment_date: next,
+        payment_amount: amount,
+      },
+    };
+  };
   const bills = [
-    {
-      account: /** @type {AccountKey} */ ("checking"),
-      body: { status: "recurring", payee: "Columbus Property Mgmt", nickname: tag("Rent"), recurring_date: 1, payment_amount: 1250 },
-    },
-    {
-      account: /** @type {AccountKey} */ ("checking"),
-      body: { status: "recurring", payee: "Buckeye Fiber", nickname: tag("Internet"), recurring_date: 15, payment_amount: 60 },
-    },
+    recurring("Columbus Property Mgmt", "Rent", 1, 1250),
+    recurring("Buckeye Fiber", "Internet", 15, 60),
     ...electric.map(([d, amount]) => ({
       account: /** @type {AccountKey} */ ("checking"),
       body: {
@@ -108,6 +140,8 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
         payee: "AEP Ohio",
         nickname: tag(`Electric (${day(d)})`),
         payment_date: day(d),
+        recurring_date: 0,
+        upcoming_payment_date: day(d),
         payment_amount: amount,
       },
     })),

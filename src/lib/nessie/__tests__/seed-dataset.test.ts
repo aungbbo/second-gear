@@ -4,6 +4,7 @@ import {
   buildSeedDataset,
   DEFAULT_PERSONA,
   isoDay,
+  monthlyDueDates,
   SEED_MARKER,
   TRANSACTION_STATUS,
 } from "../../../../scripts/nessie-seed/dataset.mjs";
@@ -102,8 +103,6 @@ describe("seed dataset shape", () => {
     }
     for (const { body } of dataset.bills) {
       expect(["pending", "recurring", "cancelled", "completed"]).toContain(body.status);
-      if ("recurring_date" in body) expect(body.recurring_date).toBeGreaterThanOrEqual(1);
-      if ("recurring_date" in body) expect(body.recurring_date).toBeLessThanOrEqual(28);
     }
     for (const { body } of dataset.loans) {
       expect(["auto", "home", "small business"]).toContain(body.type);
@@ -116,6 +115,38 @@ describe("seed dataset shape", () => {
       expect(body.status).toBe(TRANSACTION_STATUS);
     }
     expect(["pending", "cancelled", "completed", "executed"]).toContain(TRANSACTION_STATUS);
+  });
+
+  it("gives every bill the fields the sandbox needs to list bills, without inventing obligations", () => {
+    for (const { body } of dataset.bills) {
+      // GET /bills 400s for the whole account if any bill lacks these.
+      expect(Number.isInteger(body.recurring_date)).toBe(true);
+      expect(typeof body.upcoming_payment_date).toBe("string");
+      expect(parseNessieDate(body.payment_date)).not.toBeNull();
+      expect(parseNessieDate(body.upcoming_payment_date)).not.toBeNull();
+    }
+    for (const { body } of dataset.bills.filter((b) => b.body.status === "recurring")) {
+      expect(body.recurring_date).toBeGreaterThanOrEqual(1);
+      expect(body.recurring_date).toBeLessThanOrEqual(28);
+      // Last due date on/before asOf, next one strictly after, both on the due day, one month apart.
+      expect(body.payment_date <= AS_OF && body.upcoming_payment_date > AS_OF).toBe(true);
+      expect(Number(body.payment_date.slice(8))).toBe(body.recurring_date);
+      expect(Number(body.upcoming_payment_date.slice(8))).toBe(body.recurring_date);
+      expect(monthlyDueDates(AS_OF, body.recurring_date)).toEqual({ last: body.payment_date, next: body.upcoming_payment_date });
+    }
+    for (const { body } of dataset.bills.filter((b) => b.body.status === "completed")) {
+      // One-off: not recurring, and the only "upcoming" date is the one already paid.
+      expect(body.recurring_date).toBe(0);
+      expect(body.upcoming_payment_date).toBe(body.payment_date);
+      expect(body.payment_date < AS_OF).toBe(true);
+    }
+  });
+
+  it("computes monthly due dates across month and year boundaries", () => {
+    expect(monthlyDueDates("2026-10-24", 1)).toEqual({ last: "2026-10-01", next: "2026-11-01" });
+    expect(monthlyDueDates("2026-10-15", 15)).toEqual({ last: "2026-10-15", next: "2026-11-15" });
+    expect(monthlyDueDates("2026-01-10", 15)).toEqual({ last: "2025-12-15", next: "2026-01-15" });
+    expect(monthlyDueDates("2026-12-20", 15)).toEqual({ last: "2026-12-15", next: "2027-01-15" });
   });
 
   it("marks every record and ties the customer to the persona", () => {

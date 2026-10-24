@@ -7,7 +7,7 @@
 //   npm run nessie:seed -- --apply           creates a NEW customer and its data
 //   npm run nessie:seed -- --resume          read-only: what a resume of the manifest's partial seed would post
 //   npm run nessie:seed -- --apply --resume  posts only the records that partial seed is missing
-//   ... --apply --resume --canary-only       posts at most the single canary deposit, verifies it, stops
+//   ... --apply [--resume] --canary-only     posts at most one record of each shape, lists each back, stops
 //
 // Safety: POSTs are impossible without --apply, there is no PUT/PATCH/DELETE
 // (and never DELETE /data), POSTs are never retried, and the key, customer id,
@@ -39,7 +39,7 @@ class SeedError extends Error {
 
 // ---------- args ----------
 
-const USAGE = `Usage: npm run nessie:seed -- [--preflight | --apply] [--resume [--canary-only]] [--persona <id>] [--as-of YYYY-MM-DD] [--allow-duplicate]`;
+const USAGE = `Usage: npm run nessie:seed -- [--preflight | --apply] [--resume] [--canary-only] [--persona <id>] [--as-of YYYY-MM-DD] [--allow-duplicate]`;
 
 function parseArgs(argv) {
   const opts = { mode: "dry-run", persona: DEFAULT_PERSONA, asOf: null, allowDuplicate: false, resume: false, canaryOnly: false };
@@ -64,7 +64,7 @@ function parseArgs(argv) {
   if (opts.asOf && opts.mode === "apply") {
     throw new SeedError("--as-of is for dry runs only; --apply always seeds relative to today.", EXIT.usage);
   }
-  if (opts.canaryOnly && !opts.resume) throw new SeedError("--canary-only works with --resume.", EXIT.usage);
+  if (opts.canaryOnly && opts.mode !== "apply") throw new SeedError("--canary-only needs --apply (it writes the canaries).", EXIT.usage);
   if (opts.resume && (opts.allowDuplicate || opts.asOf)) {
     throw new SeedError("--resume continues the manifest's own seed; it takes neither --allow-duplicate nor --as-of.", EXIT.usage);
   }
@@ -143,7 +143,7 @@ function createClient({ baseUrl, apiKey, allowWrites }) {
   return {
     async get(path) {
       const res = await send("GET", path);
-      if (!res.ok) throw new SeedError(`${res.endpoint}: HTTP ${res.status}`);
+      if (!res.ok) throw new SeedError(`${res.endpoint}: ${describeFailure(res)}`);
       return res.json;
     },
     /** One attempt only — a retried POST could create a duplicate. */
@@ -248,15 +248,21 @@ function reportPreflight(result, dataset) {
 
 // ---------- apply ----------
 
-const sameRecord = (a, b, fields) => fields.every((f) => a?.[f] === b?.[f]);
 const notCancelled = (record) => !/cancel/i.test(record?.status ?? "");
 
-async function apply(client, dataset, pre, manifest, save) {
+async function apply(client, dataset, pre, manifest, save, { canaryOnly = false } = {}) {
   if (pre.duplicates > 0) {
     throw new SeedError(`Refusing: ${pre.duplicates} customer(s) already exist for ${dataset.persona}. Use --allow-duplicate to seed another.`, EXIT.refused);
   }
   if (pre.manifestComplete) {
     throw new SeedError(`Refusing: ${MANIFEST_PATH} already records a complete seed for ${dataset.persona}. Use --allow-duplicate to seed another.`, EXIT.refused);
+  }
+  if (pre.manifestPresent) {
+    // Never overwrite a manifest: it holds the only copy of a seed's ids.
+    throw new SeedError(
+      `Refusing: ${MANIFEST_PATH} already exists. Resume it (--resume) or archive it first, e.g. mv ${MANIFEST_PATH} .nessie-seed.<persona>.broken.local.json`,
+      EXIT.refused,
+    );
   }
 
   const step = (label) => console.log(`  … ${label}`);
@@ -280,7 +286,7 @@ async function apply(client, dataset, pre, manifest, save) {
     manifest.accountIds[a.key] = (await client.post(`/customers/${manifest.customerId}/accounts`, a.body))._id;
     save();
   }
-  await seedTransactions(client, dataset, manifest, save, emptyExisting());
+  await seedTransactions(client, dataset, manifest, save, emptyExisting(), { canaryOnly });
 }
 
 // Stream label → [resource path, field that uniquely labels each seeded record].
@@ -307,62 +313,101 @@ async function existingRecords(client, manifest) {
   return existing;
 }
 
+// Fields that must round-trip exactly, per stream — used by the canaries and the read-back.
+const VERIFY_FIELDS = {
+  deposits: ["transaction_date", "amount", "description", "status", "medium"],
+  withdrawals: ["transaction_date", "amount", "description", "status", "medium"],
+  bills: ["status", "payee", "nickname", "payment_date", "recurring_date", "upcoming_payment_date", "payment_amount"],
+  purchases: ["purchase_date", "amount", "description", "status", "medium", "merchant_id"],
+  loans: ["type", "status", "credit_score", "monthly_payment", "amount", "description"],
+};
+
+/** The exact body POSTed for a dataset record (purchases gain their merchant id). */
+const buildBody = (label, record, manifest) =>
+  label === "purchases" ? { merchant_id: manifest.merchantIds[record.merchant], ...record.body } : record.body;
+
 /**
- * Posts every dataset record not already in `existing`, canary first. Shared
- * by --apply (nothing exists yet) and --apply --resume (skip what a partial
- * seed already wrote), so a resume can never double-post a record.
+ * One record of every shape the seed writes, posted and listed back before any
+ * bulk write: the bills lesson is that POST can accept a record that later
+ * breaks GET for the whole collection.
+ */
+function canaryRecords(dataset) {
+  return [
+    ["deposits", dataset.deposits[0]],
+    ["withdrawals", dataset.withdrawals[0]],
+    ["bills", dataset.bills.find((b) => b.body.status === "recurring")],
+    ["bills", dataset.bills.find((b) => b.body.status === "completed")],
+    ["purchases", dataset.purchases[0]],
+    ["loans", dataset.loans[0]],
+  ];
+}
+
+/**
+ * Posts every dataset record not already in `existing`, canaries first.
+ * Shared by --apply (nothing exists yet) and --apply --resume (skip what a
+ * partial seed already wrote), so a resume can never double-post a record.
+ * Every created id is recorded in manifest.recordIds, keyed by stream and label.
  */
 async function seedTransactions(client, dataset, manifest, save, existing, { canaryOnly = false } = {}) {
   const step = (label) => console.log(`  … ${label}`);
   const accountPath = (key) => `/accounts/${manifest.accountIds[key]}`;
-  const has = (label, record) => (existing[label].get(record.body[STREAMS[label][1]]) ?? 0) > 0;
-  const posted = (label) => (manifest.counts[label] = (manifest.counts[label] ?? 0) + 1);
+  const keyOf = (label, record) => record.body[STREAMS[label][1]];
+  const has = (label, record) => (existing[label].get(keyOf(label, record)) ?? 0) > 0;
+  manifest.recordIds ??= {};
 
-  // Canary: prove Nessie keeps a back-dated record exactly before 40+ more writes.
-  const [canary, ...restDeposits] = dataset.deposits;
-  if (has("deposits", canary)) {
-    step("canary deposit already present — verifying");
-  } else {
-    step("canary deposit");
-    await client.post(`${accountPath(canary.account)}/deposits`, canary.body);
-    posted("deposits");
+  const post = async (label, record) => {
+    const created = await client.post(`${accountPath(record.account)}/${STREAMS[label][0]}`, buildBody(label, record, manifest));
+    manifest.counts[label] = (manifest.counts[label] ?? 0) + 1;
+    (manifest.recordIds[label] ??= {})[keyOf(label, record)] = created._id;
+    existing[label].set(keyOf(label, record), 1);
     save();
+  };
+
+  // Canaries: each shape must POST, list back without error, and match field for field.
+  const verified = [];
+  for (const [label, record] of canaryRecords(dataset)) {
+    const shape = label === "bills" ? `bill (${record.body.status})` : label.slice(0, -1);
+    if (has(label, record)) step(`canary ${shape} already present — verifying`);
+    else {
+      step(`canary ${shape}`);
+      await post(label, record);
+    }
+    let listed;
+    try {
+      listed = await client.get(`${accountPath(record.account)}/${STREAMS[label][0]}`);
+    } catch (err) {
+      manifest.canary = { ok: false, resource: label, error: scrub(err?.message ?? err) };
+      throw new SeedError(`Canary failed: listing ${label} after the canary failed — ${scrub(err?.message ?? err)}. Stopping.`, EXIT.canary);
+    }
+    const expected = buildBody(label, record, manifest);
+    const match = Array.isArray(listed) ? listed.find((x) => x?.[STREAMS[label][1]] === keyOf(label, record)) : null;
+    const fields = VERIFY_FIELDS[label].filter((f) => f in expected);
+    const changed = match ? fields.filter((f) => match[f] !== expected[f]) : ["<record not found>"];
+    if (changed.length > 0) {
+      manifest.canary = { ok: false, resource: label, changed };
+      throw new SeedError(`Canary failed: Nessie changed ${changed.join(", ")} on a canary ${shape}. Stopping.`, EXIT.canary);
+    }
+    verified.push(shape);
   }
-  const stored = (await client.get(`${accountPath(canary.account)}/deposits`)) ?? [];
-  const match = Array.isArray(stored) ? stored.find((d) => d?.description === canary.body.description) : null;
-  // status is required by the live sandbox, so it must round-trip exactly too.
-  const canaryFields = ["transaction_date", "amount", "description", "status"];
-  if (!match || !sameRecord(match, canary.body, canaryFields)) {
-    const changed = match ? canaryFields.filter((f) => match[f] !== canary.body[f]) : ["<record not found>"];
-    manifest.canary = { ok: false, changed };
-    throw new SeedError(`Canary failed: Nessie changed ${changed.join(", ")} on a back-dated deposit. Stopping.`, EXIT.canary);
-  }
-  manifest.canary = { ok: true };
-  existing.deposits.set(canary.body.description, 1);
+  manifest.canary = { ok: true, verified };
+  save();
   if (canaryOnly) return;
 
-  const postMissing = async (label, records, build = (r) => r.body) => {
+  for (const label of Object.keys(STREAMS)) {
     let skipped = 0;
     let sent = 0;
-    for (const r of records) {
-      if (has(label, r)) {
+    for (const record of dataset[label]) {
+      if (has(label, record)) {
         skipped++;
         continue;
       }
-      await client.post(`${accountPath(r.account)}/${STREAMS[label][0]}`, build(r));
-      posted(label);
+      // Loans are a documented endpoint; a failed loan POST stops the run like any
+      // other, because a persona missing its debt would overstate what it can afford.
+      await post(label, record);
       sent++;
     }
-    save();
     step(`${label} posted ${sent}${skipped ? `, already present ${skipped}` : ""}`);
-  };
-  await postMissing("deposits", restDeposits);
-  await postMissing("withdrawals", dataset.withdrawals);
-  await postMissing("bills", dataset.bills);
-  await postMissing("purchases", dataset.purchases, (r) => ({ merchant_id: manifest.merchantIds[r.merchant], ...r.body }));
-  // Loans are a documented endpoint; a failed loan POST stops the run like any other,
-  // because a persona missing its debt would overstate what it can afford.
-  await postMissing("loans", dataset.loans);
+  }
 
   manifest.readBack = await readBack(client, dataset, manifest);
   manifest.readBackMatches = manifest.readBack.mismatches.length === 0;
@@ -401,7 +446,7 @@ async function loadResumeState(client, persona) {
     try {
       return await client.get(path);
     } catch (err) {
-      if (err instanceof SeedError && / HTTP 404$/.test(err.message)) refuse(`${what} from the manifest is not visible with this key.`);
+      if (err instanceof SeedError && /: HTTP 404\b/.test(err.message)) refuse(`${what} from the manifest is not visible with this key.`);
       throw err;
     }
   };
@@ -445,27 +490,21 @@ function reportResume(state) {
 
 /** GETs everything back and compares to the dataset; reports field names only. */
 async function readBack(client, dataset, manifest) {
-  const checks = [
-    ["deposits", "deposits", "description", ["transaction_date", "amount", "description", "status"]],
-    ["withdrawals", "withdrawals", "description", ["transaction_date", "amount", "description", "status"]],
-    ["bills", "bills", "nickname", ["payment_amount", "nickname", "status", "payment_date", "recurring_date"]],
-    ["purchases", "purchases", "description", ["purchase_date", "amount", "description", "status"]],
-    ["loans", "loans", "description", ["monthly_payment", "status", "type", "amount", "credit_score", "description"]],
-  ];
   const mismatches = [];
   const counts = {};
-  for (const [label, resource, keyField, fields] of checks) {
+  for (const [label, [resource, keyField]] of Object.entries(STREAMS)) {
     const live = (await client.get(`/accounts/${manifest.accountIds.checking}/${resource}`)) ?? [];
     const expected = dataset[label];
     counts[label] = Array.isArray(live) ? live.length : 0;
     if (counts[label] !== expected.length) mismatches.push(`${label}: count ${counts[label]} ≠ ${expected.length}`);
-    for (const { body } of expected) {
+    for (const record of expected) {
+      const body = buildBody(label, record, manifest);
       const found = Array.isArray(live) ? live.find((x) => x?.[keyField] === body[keyField]) : null;
       if (!found) {
         mismatches.push(`${label}: missing "${body[keyField]}"`);
         continue;
       }
-      const changed = fields.filter((f) => f in body && found[f] !== body[f]);
+      const changed = VERIFY_FIELDS[label].filter((f) => f in body && found[f] !== body[f]);
       if (changed.length > 0) mismatches.push(`${label}: "${body[keyField]}" changed ${changed.join(", ")}`);
       if (!notCancelled(found)) mismatches.push(`${label}: "${body[keyField]}" is cancelled`);
     }
@@ -536,19 +575,28 @@ async function resumeMain(opts) {
   }
   const { manifest } = state;
   if (opts.canaryOnly) {
-    console.log("\nCanary only (at most one POST):");
-    await guardedRun(manifest, async (save) => {
-      await seedTransactions(client, state.dataset, manifest, save, state.existing, { canaryOnly: true });
-      throw new CanaryOnlyDone();
-    }).catch((err) => {
-      if (!(err instanceof CanaryOnlyDone)) throw err;
-    });
-    console.log("\nCanary deposit stored and verified (date, amount, description). Seed still incomplete; next: --apply --resume.");
+    console.log(`\nCanaries only (at most ${canaryRecords(state.dataset).length} POSTs):`);
+    await runCanariesOnly(manifest, (save) =>
+      seedTransactions(client, state.dataset, manifest, save, state.existing, { canaryOnly: true }),
+    );
     return;
   }
   console.log("\nResuming:");
   await guardedRun(manifest, (save) => seedTransactions(client, state.dataset, manifest, save, state.existing));
   reportResult(manifest, "seed resumed and completed");
+}
+
+/** Runs a canary-only pass, leaving the manifest incomplete and resumable. */
+async function runCanariesOnly(manifest, run) {
+  await guardedRun(manifest, async (save) => {
+    await run(save);
+    throw new CanaryOnlyDone();
+  }).catch((err) => {
+    if (!(err instanceof CanaryOnlyDone)) throw err;
+  });
+  console.log(
+    `\nCanaries stored and verified: ${manifest.canary.verified.join(", ")} — every field round-trips and each list reads back. Seed still incomplete; next: --apply --resume.`,
+  );
 }
 
 async function main() {
@@ -579,10 +627,16 @@ async function main() {
   }
 
   if (opts.allowDuplicate) {
+    // Allows another customer for the same persona; an existing manifest still blocks.
     pre.duplicates = 0;
     pre.manifestComplete = false;
   }
   const manifest = { persona: dataset.persona, asOf, customerId: null, accountIds: {}, merchantIds: {}, counts: {}, complete: false };
+  if (opts.canaryOnly) {
+    console.log("\nApplying (customer, accounts, missing merchants, then canaries only):");
+    await runCanariesOnly(manifest, (save) => apply(client, dataset, pre, manifest, save, { canaryOnly: true }));
+    return;
+  }
   console.log("\nApplying:");
   await guardedRun(manifest, (save) => apply(client, dataset, pre, manifest, save));
   reportResult(manifest, "customer created");
