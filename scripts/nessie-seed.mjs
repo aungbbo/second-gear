@@ -18,10 +18,11 @@ import { buildSeedDataset, DEFAULT_PERSONA, SEED_MARKER } from "./nessie-seed/da
 const require = createRequire(import.meta.url);
 const MANIFEST_PATH = ".nessie-seed.local.json";
 const DEFAULT_BASE_URL = "https://api.nessieisreal.com";
-const POST_GAP_MS = 150;
+// Tests shorten the gap; the real sandbox gets 150 ms between POSTs.
+const POST_GAP_MS = Number(process.env.NESSIE_SEED_POST_GAP_MS ?? 150);
 const TIMEOUT_MS = 10000;
 
-const EXIT = { ok: 0, failed: 1, refused: 2, canary: 3, usage: 64 };
+const EXIT = { ok: 0, failed: 1, refused: 2, canary: 3, usage: 64, interrupted: 130 };
 
 class SeedError extends Error {
   constructor(message, exitCode = EXIT.failed) {
@@ -221,7 +222,7 @@ function reportPreflight(result, dataset) {
 const sameRecord = (a, b, fields) => fields.every((f) => a?.[f] === b?.[f]);
 const notCancelled = (record) => !/cancel/i.test(record?.status ?? "");
 
-async function apply(client, dataset, pre, manifest) {
+async function apply(client, dataset, pre, manifest, save) {
   if (pre.duplicates > 0) {
     throw new SeedError(`Refusing: ${pre.duplicates} customer(s) already exist for ${dataset.persona}. Use --allow-duplicate to seed another.`, EXIT.refused);
   }
@@ -237,15 +238,18 @@ async function apply(client, dataset, pre, manifest) {
     if (manifest.merchantIds[m.category]) continue;
     step(`merchant ${m.category}`);
     manifest.merchantIds[m.category] = (await client.post("/merchants", m.body))._id;
+    save();
   }
 
   step("customer");
   manifest.customerId = (await client.post("/customers", dataset.customer))._id;
+  save();
 
   manifest.accountIds = {};
   for (const a of dataset.accounts) {
     step(`account ${a.key}`);
     manifest.accountIds[a.key] = (await client.post(`/customers/${manifest.customerId}/accounts`, a.body))._id;
+    save();
   }
   const accountPath = (key) => `/accounts/${manifest.accountIds[key]}`;
 
@@ -270,6 +274,7 @@ async function apply(client, dataset, pre, manifest) {
       await client.post(`${accountPath(r.account)}/${resource}`, build(r));
       manifest.counts[label] = (manifest.counts[label] ?? 0) + 1;
     }
+    save();
     step(`${label} ${manifest.counts[label] ?? 0}`);
   };
   await postAll("deposits", restDeposits, "deposits");
@@ -360,13 +365,25 @@ async function main() {
     pre.manifestComplete = false;
   }
   const manifest = { persona: dataset.persona, asOf, customerId: null, accountIds: {}, merchantIds: {}, counts: {}, complete: false };
+  // Write-ahead: persist ids as soon as they exist, so an interrupted run
+  // still records what it created. Nothing is written before the first POST succeeds.
+  const save = () => {
+    if (manifest.customerId || Object.values(manifest.merchantIds).some(Boolean)) writeManifest(manifest);
+  };
+  const interrupt = (signal) => {
+    save();
+    console.error(`\n✗ Interrupted by ${signal}; partial seed recorded in ${MANIFEST_PATH} (complete: false).`);
+    process.exit(EXIT.interrupted);
+  };
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+
   console.log("\nApplying:");
   try {
-    await apply(client, dataset, pre, manifest);
+    await apply(client, dataset, pre, manifest, save);
     manifest.complete = true;
   } finally {
-    // Only write once something may exist in the sandbox.
-    if (manifest.customerId || Object.values(manifest.merchantIds).some(Boolean)) writeManifest(manifest);
+    save();
   }
   console.log(
     [
