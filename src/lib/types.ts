@@ -4,6 +4,26 @@ export interface BuyerNeed {
   timeframeWeeks: number;
   downPayment: number;
   zip: string;
+  ownershipCostOverrides?: OwnershipCostOverrides;
+  searchPreferences?: VehicleSearchPreferences;
+}
+
+/** User-provided recurring ownership costs. Missing values remain estimates. */
+export interface OwnershipCostOverrides {
+  insuranceMonthly?: number;
+  fuelMonthly?: number;
+  maintenanceMonthly?: number;
+  registrationAndTaxesMonthly?: number;
+  otherMonthly?: number;
+  dealerFees?: number;
+}
+
+/** Optional vehicle-search inputs preserved for the future listings provider. */
+export interface VehicleSearchPreferences {
+  radiusMiles?: number;
+  maxMileage?: number;
+  minYear?: number;
+  vehicleTypes?: string[];
 }
 
 export type CreditTier =
@@ -71,9 +91,82 @@ export interface LoanScenario {
   amountFinanced: number;
   monthlyPayment: number;
   totalInterest: number;
+  /** Total paid to the lender, excluding the down payment. */
+  totalFinancingCost: number;
   totalCost: number;
+  remainingBalanceAt36Months: number;
+  estimatedValueAt36Months: number;
+  negativeEquityAt36Months: number;
   negativeEquityMonths: number;
   withinBudget: boolean;
+}
+
+export type VehicleAffordabilityStatus =
+  | "affordable"
+  | "financially_risky"
+  | "not_affordable"
+  | "insufficient_data";
+
+export interface FinancialRiskIndicator {
+  code: string;
+  severity: "low" | "medium" | "high";
+  label: string;
+  detail: string;
+}
+
+export interface OwnershipCostBreakdown {
+  insuranceMonthly: number;
+  fuelMonthly: number;
+  maintenanceMonthly: number;
+  registrationAndTaxesMonthly: number;
+  otherMonthly: number;
+  recurringMonthly: number;
+  dealerFees: number;
+  upfrontCashNeeded: number;
+  totalMonthlyCost: number;
+  estimateNotes: string[];
+}
+
+export interface VehicleAffordabilityDecision {
+  status: VehicleAffordabilityStatus;
+  recommendedPurchase: boolean;
+  totalMonthlyCost: number;
+  maxSustainableMonthlyCost: number;
+  reasons: string[];
+  warnings: string[];
+}
+
+export interface AffordabilityAssessment {
+  statedMonthlyBudget: number;
+  disposableIncomeAfterEssentialsAndDebt: number;
+  emergencyReserveRequired: number;
+  safeDownPayment: number;
+  maxSustainableLoanPayment: number;
+  sustainableMonthlyVehicleCost: number;
+  maxAffordableFinancingAmount: number;
+  maxAffordableVehiclePrice: number;
+  preferredTermMonths: number;
+  riskIndicators: FinancialRiskIndicator[];
+  warnings: string[];
+  assumptions: string[];
+  dataQuality: "complete" | "limited";
+  recommendedPurchase: boolean;
+  summary: string;
+}
+
+export interface AffordableSearchConstraints {
+  zip: string;
+  radiusMiles: number | null;
+  minPrice: number;
+  maxPrice: number;
+  maxMonthlyLoanPayment: number;
+  maxMonthlyVehicleCost: number;
+  maxMileage: number | null;
+  minYear: number | null;
+  vehicleTypes: string[];
+  preferredTermMonths: number;
+  allowedTermsMonths: number[];
+  assumptions: string[];
 }
 
 export interface CarAnalysis {
@@ -81,6 +174,8 @@ export interface CarAnalysis {
   bestScenario: LoanScenario;
   allScenarios: LoanScenario[];
   estimatedValueAt36mo: number;
+  ownershipCosts: OwnershipCostBreakdown;
+  affordabilityDecision: VehicleAffordabilityDecision;
   warnings: string[];
 }
 
@@ -119,6 +214,8 @@ export interface PipelineResult {
   need: BuyerNeed;
   credit: CreditReport;
   affordability: AffordabilityResult;
+  affordabilityAssessment: AffordabilityAssessment;
+  searchConstraints: AffordableSearchConstraints;
   listings: CarListing[];
   rankedCars: RankedCar[];
   dealerPacket: DealerPacket;
