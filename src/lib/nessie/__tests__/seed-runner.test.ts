@@ -126,7 +126,7 @@ describe("seed runner against a mock Nessie", () => {
       complete: true,
       readBackMatches: true,
       canary: { ok: true },
-      counts: { deposits: 9, withdrawals: 3, bills: 5, purchases: 24, loans: 1 },
+      counts: { deposits: 9, withdrawals: 6, bills: 2, purchases: 24, loans: 1 },
     });
     expect(server.customers).toHaveLength(1);
     expect(server.accounts).toHaveLength(3);
@@ -271,8 +271,8 @@ describe("seed runner against a mock Nessie", () => {
     expect(run.code).toBe(1);
     expect(run.output).toContain("POST /accounts/:id/loans: HTTP 404");
     expectCleanOutput(run);
-    // Caught by the loan canary: 7 setup + deposit, withdrawal, 2 bills, purchase canaries — no bulk writes.
-    expect(server.postCount).toBe(7 + 5);
+    // Caught by the loan canary: 7 setup + deposit, withdrawal, bill, purchase canaries — no bulk writes.
+    expect(server.postCount).toBe(7 + 4);
     const manifest = readManifest();
     expect(manifest.complete).toBe(false);
     expect(manifest.counts.loans).toBeUndefined();
@@ -360,8 +360,8 @@ describe("seed runner against a mock Nessie", () => {
       expect(resumed.code).toBe(0);
       expect(resumed.output).toContain("already present");
       expect(server.records.deposits).toHaveLength(9);
-      expect(server.records.withdrawals).toHaveLength(3);
-      expect(server.records.bills).toHaveLength(5);
+      expect(server.records.withdrawals).toHaveLength(6);
+      expect(server.records.bills).toHaveLength(2);
       expect(server.records.purchases).toHaveLength(24);
       expect(server.records.loans).toHaveLength(1);
       expect(server.postCount).toBe(FULL_SEED_POSTS);
@@ -410,22 +410,22 @@ describe("seed runner against a mock Nessie", () => {
       const canaryRun = await runSeed(["--apply", "--resume", "--canary-only"]);
       expect(canaryRun.code, canaryRun.output.split("\n").filter((l) => l.startsWith("✗")).join("\n")).toBe(0);
       expect(canaryRun.output).toContain(
-        "Canaries stored and verified: deposit, withdrawal, bill (recurring), bill (completed), purchase, loan",
+        "Canaries stored and verified: deposit, withdrawal, bill (recurring), purchase, loan",
       );
       expectCleanOutput(canaryRun);
-      expect(server.postCount - postsBefore, "one POST per canary shape").toBe(6);
+      expect(server.postCount - postsBefore, "one POST per canary shape").toBe(5);
       const { asOf } = readManifest();
       const dataset = buildSeedDataset({ asOf });
       expect(server.records.deposits.map((d) => d.description)).toEqual([dataset.deposits[0].body.description]);
-      expect(server.records.bills.map((b) => b.status).sort()).toEqual(["completed", "recurring"]);
+      expect(server.records.bills.map((b) => b.status)).toEqual(["recurring"]);
       expect(readManifest()).toMatchObject({ complete: false, canary: { ok: true } });
       expect(readManifest().lastError).toBeUndefined();
-      expect(Object.values(readManifest().recordIds).flatMap((ids) => Object.values(ids as object))).toHaveLength(6);
+      expect(Object.values(readManifest().recordIds).flatMap((ids) => Object.values(ids as object))).toHaveLength(5);
 
       const again = await runSeed(["--apply", "--resume", "--canary-only"]);
       expect(again.code).toBe(0);
       expect(again.output).toContain("canary deposit already present");
-      expect(server.postCount - postsBefore, "a second canary-only run posts nothing").toBe(6);
+      expect(server.postCount - postsBefore, "a second canary-only run posts nothing").toBe(5);
 
       const resumed = await runSeed(["--apply", "--resume"]);
       expect(resumed.code).toBe(0);
@@ -453,12 +453,12 @@ describe("seed runner against a mock Nessie", () => {
       expect(server.postCount).toBe(0);
     });
 
-    it("--apply --canary-only on a fresh persona writes setup + 6 canaries, then --apply --resume finishes", async () => {
+    it("--apply --canary-only on a fresh persona writes setup + 5 canaries, then --apply --resume finishes", async () => {
       await start();
       const canaries = await runSeed(["--apply", "--canary-only"]);
       expect(canaries.code, canaries.output.split("\n").filter((l) => l.startsWith("✗")).join("\n")).toBe(0);
       expect(canaries.output).toContain("Canaries stored and verified");
-      expect(server.postCount).toBe(3 + 1 + 3 + 6);
+      expect(server.postCount).toBe(3 + 1 + 3 + 5);
       expect(readManifest()).toMatchObject({ complete: false, canary: { ok: true } });
 
       const rest = await runSeed(["--apply", "--resume"]);
@@ -518,7 +518,7 @@ describe("seed runner against a mock Nessie", () => {
       await start();
       const dry = await runSeed([]);
       const lines = dry.output.split("\n").filter((l) => / (deposit|withdrawal|purchase) +\{/.test(l));
-      expect(lines).toHaveLength(9 + 3 + 24);
+      expect(lines).toHaveLength(9 + 6 + 24);
       for (const line of lines) expect(line).toContain('"status":"completed"');
     });
 
@@ -556,7 +556,7 @@ describe("seed runner against a mock Nessie", () => {
 
       const retry = await runSeed(["--apply", "--resume", "--canary-only"]);
       expect(retry.code).toBe(0);
-      expect(server.postCount - posts).toBe(6);
+      expect(server.postCount - posts).toBe(5);
       expect(server.records.deposits).toHaveLength(1);
       expect(server.records.deposits[0]).toMatchObject({ status: "completed", amount: 1650 });
       expect(readManifest()).toMatchObject({ complete: false, canary: { ok: true } });
@@ -590,10 +590,10 @@ describe("seed runner against a mock Nessie", () => {
       const manifest = readManifest();
       const res = await fetch(`${server.baseUrl}/accounts/${manifest.accountIds.checking}/bills?key=test`);
       expect(res.status).toBe(200);
-      expect((await res.json()) as unknown[]).toHaveLength(5);
+      expect((await res.json()) as unknown[]).toHaveLength(2);
       const { status, body } = await pipeline(manifest.customerId, 600);
       expect(status).toBe(200);
-      // Rent 1250 + internet 60 recurring, electric (95+110+88)/3, ATM 120 → 1530; unchanged by the new bill fields.
+      // Rent 1250 + internet 60 recurring, ATM 120 + electric ACH (95+110+88)/3 as withdrawals → 1530, as before.
       expect(body.affordability).toMatchObject({ essentialExpenses: 1530, maxSustainablePayment: 440, recommendedPayment: 385 });
     });
 
@@ -619,8 +619,8 @@ describe("seed runner against a mock Nessie", () => {
       const { recordIds } = readManifest() as { recordIds: Record<string, Record<string, string>> };
       expect(Object.fromEntries(Object.entries(recordIds).map(([k, v]) => [k, Object.keys(v).length]))).toEqual({
         deposits: 9,
-        withdrawals: 3,
-        bills: 5,
+        withdrawals: 6,
+        bills: 2,
         purchases: 24,
         loans: 1,
       });
@@ -647,6 +647,92 @@ describe("seed runner against a mock Nessie", () => {
       expect((await runSeed(["--apply"])).code).toBe(0);
       expect(readManifest().persona).toBe("sg-demo-subprime-02");
       expect(server.customers[0].last_name).toBe("Demo sg-demo-subprime-02");
+    });
+  });
+
+  describe("option B: recurring bills only, electric as ACH withdrawals", () => {
+    const BILL_EXTRA_FIELD_400 = "1 validation error for BillCreate\nupcoming_payment_date\n  extra fields not permitted (type=value_error.extra)";
+
+    it("the mock rejects upcoming_payment_date on BillCreate and computes it for recurring bills", async () => {
+      await start();
+      const post = (path: string, body: object) =>
+        fetch(`${server.baseUrl}${path}?key=test`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const customer = (await (await post("/customers", { first_name: "T", last_name: "T" })).json()).objectCreated._id;
+      const account = (await (await post(`/customers/${customer}/accounts`, { type: "Checking", nickname: "c", rewards: 0, balance: 1 })).json()).objectCreated._id;
+      const bill = { status: "recurring", payee: "P", nickname: "n", payment_date: "2026-10-01", recurring_date: 1, payment_amount: 10 };
+
+      const rejected = await post(`/accounts/${account}/bills`, { ...bill, upcoming_payment_date: "2026-11-01" });
+      expect(rejected.status).toBe(400);
+      expect(await rejected.json()).toBe(BILL_EXTRA_FIELD_400);
+
+      const accepted = await post(`/accounts/${account}/bills`, bill);
+      expect(accepted.status).toBe(201);
+      const listed = (await (await fetch(`${server.baseUrl}/accounts/${account}/bills?key=test`)).json()) as { upcoming_payment_date: string }[];
+      expect(listed).toHaveLength(1);
+      expect(listed[0].upcoming_payment_date).toMatch(/^\d{4}-\d{2}-01$/);
+    });
+
+    it("stops at the bill canary when the computed upcoming_payment_date is off its due day", async () => {
+      await start({ upcomingOffByOne: true });
+      const run = await runSeed(["--apply"]);
+      expect(run.code).toBe(3);
+      expect(run.output).toContain("upcoming_payment_date not on the due day");
+      expect(server.postCount).toBe(7 + 3);
+      expect(readManifest()).toMatchObject({ complete: false, canary: { ok: false, resource: "bills" } });
+    });
+
+    it("recovers the real sg-demo-subprime-02 state: 2 canaries in, bill rejected, then canaries and bulk via resume", async () => {
+      // Phase 1 as it happened: setup + deposit + withdrawal canaries, then BillCreate 400 on the bill canary.
+      // (The empty mock also creates the 3 merchants the real sandbox reused.)
+      await start({ failPost: { nth: 3 + 4 + 2 + 1, status: 400, body: BILL_EXTRA_FIELD_400 } });
+      const phase1 = await runSeed(["--apply", "--canary-only"]);
+      expect(phase1.code).toBe(1);
+      expect(phase1.output).toContain("extra fields not permitted");
+      const afterPhase1 = server.postCount;
+      expect(afterPhase1, "the mock counts the rejected POST too").toBe(10);
+      expect(readManifest()).toMatchObject({ complete: false, counts: { deposits: 1, withdrawals: 1 } });
+
+      const preview = await runSeed(["--resume"]);
+      expect(preview.code).toBe(0);
+      expect(preview.output).toContain("deposits           1/9 present, 8 to post");
+      expect(preview.output).toContain("withdrawals        1/6 present, 5 to post");
+      expect(preview.output).toContain("bills              0/2 present, 2 to post");
+      expect(server.postCount).toBe(afterPhase1);
+
+      const canaries = await runSeed(["--apply", "--resume", "--canary-only"]);
+      expect(canaries.code, canaries.output.split("\n").filter((l) => l.startsWith("✗")).join("\n")).toBe(0);
+      expect(canaries.output).toContain("canary deposit already present");
+      expect(canaries.output).toContain("canary withdrawal already present");
+      expect(server.postCount - afterPhase1, "bill, purchase, loan canaries only").toBe(3);
+      expectCleanOutput(canaries);
+
+      const phase2 = await runSeed(["--apply", "--resume"]);
+      expect(phase2.code).toBe(0);
+      expect(server.postCount - afterPhase1 - 3, "the remaining bulk records").toBe(37);
+      expect(server.customers).toHaveLength(1);
+      expect(server.merchants).toHaveLength(3);
+      expect(Object.fromEntries(Object.entries(server.records).map(([k, v]) => [k, v.length]))).toEqual({
+        deposits: 9,
+        withdrawals: 6,
+        purchases: 24,
+        bills: 2,
+        loans: 1,
+      });
+      const manifest = readManifest();
+      expect(manifest).toMatchObject({ complete: true, readBackMatches: true });
+
+      const at400 = await pipeline(manifest.customerId, 400);
+      expect(at400.status).toBe(200);
+      expect(at400.body.affordability).toMatchObject({
+        avgMonthlyIncome: 3450,
+        essentialExpenses: 1530,
+        existingDebtPayments: 180,
+        maxSustainablePayment: 400,
+        recommendedPayment: 350,
+      });
+      const at600 = await pipeline(manifest.customerId, 600);
+      expect(at600.body.affordability).toMatchObject({ maxSustainablePayment: 440, recommendedPayment: 385 });
+      expect(at600.body.rankedCars.length).toBeGreaterThan(0);
     });
   });
 });

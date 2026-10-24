@@ -98,54 +98,48 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
     })),
   ];
 
-  const withdrawals = [8, 38, 68].map((d) => ({
-    account: /** @type {AccountKey} */ ("checking"),
-    body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 120, description: tag(`ATM cash (${day(d)})`) },
-  }));
-
+  // One-off electric payments are ACH withdrawals, not bills: the live sandbox
+  // can't list a bill without a server-computed upcoming_payment_date, which it
+  // only derives for recurring bills. The analyzer averages withdrawals over the
+  // window exactly as it does one-off bills, so essentials are unchanged.
   const electric = /** @type {const} */ ([
     [12, 95],
     [42, 110],
     [72, 88],
   ]);
-  // The live sandbox accepts a bill without recurring_date, then fails to list
-  // the account's bills ("validation errors for Bill: recurring_date,
-  // upcoming_payment_date field required"), so every bill carries both.
-  // Recurring bills: recurring_date is the due day, payment_date the last due
-  // date, upcoming_payment_date the next real one. One-off bills follow the
-  // SDK's convention of recurring_date 0, with upcoming_payment_date equal to
-  // the date already paid, so no future obligation is invented.
-  const recurring = (/** @type {string} */ payee, /** @type {string} */ label, /** @type {number} */ dueDay, /** @type {number} */ amount) => {
-    const { last, next } = monthlyDueDates(asOf, dueDay);
-    return {
+  const withdrawals = [
+    ...[8, 38, 68].map((d) => ({
       account: /** @type {AccountKey} */ ("checking"),
-      body: {
-        status: "recurring",
-        payee,
-        nickname: tag(label),
-        payment_date: last,
-        recurring_date: dueDay,
-        upcoming_payment_date: next,
-        payment_amount: amount,
-      },
-    };
-  };
-  const bills = [
-    recurring("Columbus Property Mgmt", "Rent", 1, 1250),
-    recurring("Buckeye Fiber", "Internet", 15, 60),
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 120, description: tag(`ATM cash (${day(d)})`) },
+    })),
     ...electric.map(([d, amount]) => ({
       account: /** @type {AccountKey} */ ("checking"),
       body: {
-        status: "completed",
-        payee: "AEP Ohio",
-        nickname: tag(`Electric (${day(d)})`),
-        payment_date: day(d),
-        recurring_date: 0,
-        upcoming_payment_date: day(d),
-        payment_amount: amount,
+        medium: "balance",
+        status: TRANSACTION_STATUS,
+        transaction_date: day(d),
+        amount,
+        description: tag(`Electric ACH - AEP Ohio (${day(d)})`),
       },
     })),
   ];
+
+  // Recurring bills only. BillCreate rejects upcoming_payment_date ("extra
+  // fields not permitted"); the sandbox computes it, and its bill list fails
+  // for any bill without one. recurring_date is the due day and payment_date
+  // the last due date on or before asOf.
+  const recurring = (/** @type {string} */ payee, /** @type {string} */ label, /** @type {number} */ dueDay, /** @type {number} */ amount) => ({
+    account: /** @type {AccountKey} */ ("checking"),
+    body: {
+      status: "recurring",
+      payee,
+      nickname: tag(label),
+      payment_date: monthlyDueDates(asOf, dueDay).last,
+      recurring_date: dueDay,
+      payment_amount: amount,
+    },
+  });
+  const bills = [recurring("Columbus Property Mgmt", "Rent", 1, 1250), recurring("Buckeye Fiber", "Internet", 15, 60)];
 
   const purchases = PURCHASE_STREAMS.flatMap((stream) =>
     stream.days.map((d, i) => ({

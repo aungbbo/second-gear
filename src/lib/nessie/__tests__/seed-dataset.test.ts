@@ -117,29 +117,40 @@ describe("seed dataset shape", () => {
     expect(["pending", "cancelled", "completed", "executed"]).toContain(TRANSACTION_STATUS);
   });
 
-  it("gives every bill the fields the sandbox needs to list bills, without inventing obligations", () => {
+  it("posts only recurring bills, with recurring_date and without server-computed fields", () => {
+    expect(dataset.bills).toHaveLength(2);
     for (const { body } of dataset.bills) {
-      // GET /bills 400s for the whole account if any bill lacks these.
-      expect(Number.isInteger(body.recurring_date)).toBe(true);
-      expect(typeof body.upcoming_payment_date).toBe("string");
-      expect(parseNessieDate(body.payment_date)).not.toBeNull();
-      expect(parseNessieDate(body.upcoming_payment_date)).not.toBeNull();
-    }
-    for (const { body } of dataset.bills.filter((b) => b.body.status === "recurring")) {
+      expect(body.status).toBe("recurring");
+      // BillCreate rejects upcoming_payment_date ("extra fields not permitted"); the sandbox computes it.
+      expect("upcoming_payment_date" in body).toBe(false);
       expect(body.recurring_date).toBeGreaterThanOrEqual(1);
       expect(body.recurring_date).toBeLessThanOrEqual(28);
-      // Last due date on/before asOf, next one strictly after, both on the due day, one month apart.
-      expect(body.payment_date <= AS_OF && body.upcoming_payment_date > AS_OF).toBe(true);
-      expect(Number(body.payment_date.slice(8))).toBe(body.recurring_date);
-      expect(Number(body.upcoming_payment_date.slice(8))).toBe(body.recurring_date);
-      expect(monthlyDueDates(AS_OF, body.recurring_date)).toEqual({ last: body.payment_date, next: body.upcoming_payment_date });
+      expect(body.payment_date).toBe(monthlyDueDates(AS_OF, body.recurring_date).last);
+      expect(body.payment_date <= AS_OF).toBe(true);
     }
-    for (const { body } of dataset.bills.filter((b) => b.body.status === "completed")) {
-      // One-off: not recurring, and the only "upcoming" date is the one already paid.
-      expect(body.recurring_date).toBe(0);
-      expect(body.upcoming_payment_date).toBe(body.payment_date);
-      expect(body.payment_date < AS_OF).toBe(true);
-    }
+    expect(dataset.bills.map((b) => [b.body.nickname, b.body.payment_amount, b.body.recurring_date])).toEqual([
+      ["sg-seed: Rent", 1250, 1],
+      ["sg-seed: Internet", 60, 15],
+    ]);
+  });
+
+  it("carries the one-off electric payments as checking ACH withdrawals with their original dates and amounts", () => {
+    const electric = dataset.withdrawals.filter((w) => w.body.description.includes("Electric ACH"));
+    expect(electric.map((w) => [w.body.transaction_date, w.body.amount])).toEqual([
+      [isoDay(AS_OF, 12), 95],
+      [isoDay(AS_OF, 42), 110],
+      [isoDay(AS_OF, 72), 88],
+    ]);
+    expect(electric.every((w) => w.account === "checking" && w.body.status === "completed")).toBe(true);
+    // The already-seeded ATM canary stays the first withdrawal, so resume recognises it.
+    expect(dataset.withdrawals[0].body.description).toBe(`sg-seed: ATM cash (${isoDay(AS_OF, 8)})`);
+    expect(Object.fromEntries((["deposits", "withdrawals", "bills", "purchases", "loans"] as const).map((k) => [k, dataset[k].length]))).toEqual({
+      deposits: 9,
+      withdrawals: 6,
+      bills: 2,
+      purchases: 24,
+      loans: 1,
+    });
   });
 
   it("computes monthly due dates across month and year boundaries", () => {

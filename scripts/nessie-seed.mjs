@@ -317,10 +317,25 @@ async function existingRecords(client, manifest) {
 const VERIFY_FIELDS = {
   deposits: ["transaction_date", "amount", "description", "status", "medium"],
   withdrawals: ["transaction_date", "amount", "description", "status", "medium"],
-  bills: ["status", "payee", "nickname", "payment_date", "recurring_date", "upcoming_payment_date", "payment_amount"],
+  bills: ["status", "payee", "nickname", "payment_date", "recurring_date", "payment_amount"],
   purchases: ["purchase_date", "amount", "description", "status", "medium", "merchant_id"],
   loans: ["type", "status", "credit_score", "monthly_payment", "amount", "description"],
 };
+
+/**
+ * Fields the sandbox computes rather than accepts. A recurring bill must come
+ * back with an upcoming_payment_date that is a real date on its due day, after
+ * the last payment — otherwise the bill list itself is at risk.
+ */
+function serverFieldProblems(label, found, body) {
+  if (label !== "bills") return [];
+  const upcoming = found?.upcoming_payment_date;
+  if (typeof upcoming !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(upcoming)) return ["upcoming_payment_date missing or not a date"];
+  const problems = [];
+  if (Number(upcoming.slice(8, 10)) !== body.recurring_date) problems.push("upcoming_payment_date not on the due day");
+  if (body.payment_date && upcoming.slice(0, 10) <= body.payment_date) problems.push("upcoming_payment_date not after payment_date");
+  return problems;
+}
 
 /** The exact body POSTed for a dataset record (purchases gain their merchant id). */
 const buildBody = (label, record, manifest) =>
@@ -336,7 +351,6 @@ function canaryRecords(dataset) {
     ["deposits", dataset.deposits[0]],
     ["withdrawals", dataset.withdrawals[0]],
     ["bills", dataset.bills.find((b) => b.body.status === "recurring")],
-    ["bills", dataset.bills.find((b) => b.body.status === "completed")],
     ["purchases", dataset.purchases[0]],
     ["loans", dataset.loans[0]],
   ];
@@ -382,7 +396,9 @@ async function seedTransactions(client, dataset, manifest, save, existing, { can
     const expected = buildBody(label, record, manifest);
     const match = Array.isArray(listed) ? listed.find((x) => x?.[STREAMS[label][1]] === keyOf(label, record)) : null;
     const fields = VERIFY_FIELDS[label].filter((f) => f in expected);
-    const changed = match ? fields.filter((f) => match[f] !== expected[f]) : ["<record not found>"];
+    const changed = match
+      ? [...fields.filter((f) => match[f] !== expected[f]), ...serverFieldProblems(label, match, expected)]
+      : ["<record not found>"];
     if (changed.length > 0) {
       manifest.canary = { ok: false, resource: label, changed };
       throw new SeedError(`Canary failed: Nessie changed ${changed.join(", ")} on a canary ${shape}. Stopping.`, EXIT.canary);
@@ -504,7 +520,10 @@ async function readBack(client, dataset, manifest) {
         mismatches.push(`${label}: missing "${body[keyField]}"`);
         continue;
       }
-      const changed = VERIFY_FIELDS[label].filter((f) => f in body && found[f] !== body[f]);
+      const changed = [
+        ...VERIFY_FIELDS[label].filter((f) => f in body && found[f] !== body[f]),
+        ...serverFieldProblems(label, found, body),
+      ];
       if (changed.length > 0) mismatches.push(`${label}: "${body[keyField]}" changed ${changed.join(", ")}`);
       if (!notCancelled(found)) mismatches.push(`${label}: "${body[keyField]}" is cancelled`);
     }

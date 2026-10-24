@@ -22,6 +22,8 @@ export interface MockNessieOptions {
   dropPost?: number;
   /** Extra fields the bill list demands, to simulate a sandbox whose Bill schema grew. */
   extraBillListFields?: string[];
+  /** Shift the computed upcoming_payment_date by a day, like a sandbox computing it differently. */
+  upcomingOffByOne?: boolean;
   /** Store every transaction's status as this value, like a sandbox that rewrites it. */
   rewriteStatus?: string;
   /** Called after each POST is stored, with the running count. */
@@ -68,6 +70,22 @@ function billListError(bills: Record<string, unknown>[], required: string[]): st
     }
   }
   return null;
+}
+
+/** Fields BillCreate refuses: the sandbox computes them itself. */
+const BILL_SERVER_FIELDS = ["upcoming_payment_date"];
+
+/**
+ * The sandbox derives upcoming_payment_date only for bills that recur: the
+ * next due day after today. Bills without a positive recurring_date get none,
+ * which is what later breaks the bill list.
+ */
+function computeUpcoming(recurringDate: unknown): string | undefined {
+  if (typeof recurringDate !== "number" || recurringDate < 1 || recurringDate > 28) return undefined;
+  const now = new Date();
+  const thisMonth = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), recurringDate);
+  const next = thisMonth > now.getTime() ? thisMonth : Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, recurringDate);
+  return new Date(next).toISOString().slice(0, 10);
 }
 
 /** Mirrors the sandbox's validation reply: a 400 whose JSON body is a bare string. */
@@ -181,13 +199,25 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
     } else if (parts[0] === "accounts" && RESOURCES.includes(parts[2] as (typeof RESOURCES)[number])) {
       if (parts[2] === "loans" && options.loansNotFound) return send(res, 404, { code: 404, message: "Not found" });
       if (!state.accounts.some((a) => a._id === parts[1])) return send(res, 404, { code: 404, message: "Invalid account id" });
-      const invalid = statusError(parts[2], body);
+      const extra = parts[2] === "bills" ? BILL_SERVER_FIELDS.filter((field) => field in body) : [];
+      const invalid =
+        extra.length > 0
+          ? `${extra.length} validation error${extra.length > 1 ? "s" : ""} for BillCreate\n${extra.map((f) => `${f}\n  extra fields not permitted (type=value_error.extra)`).join("\n")}`
+          : statusError(parts[2], body);
       if (invalid) {
         state.postCount = nth;
         return send(res, 400, invalid);
       }
       const record: Doc & { account_id: string } = { status: "pending", ...body, _id: mintId(), account_id: parts[1] };
       if (options.rewriteStatus && parts[2] !== "loans") record.status = options.rewriteStatus;
+      if (parts[2] === "bills") {
+        const upcoming = computeUpcoming(record.recurring_date);
+        if (upcoming) {
+          record.upcoming_payment_date = options.upcomingOffByOne
+            ? new Date(Date.parse(upcoming) + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+            : upcoming;
+        }
+      }
       if (options.rewriteDates) {
         for (const field of DATE_FIELDS) if (field in record) record[field] = new Date().toISOString().slice(0, 10);
       }
