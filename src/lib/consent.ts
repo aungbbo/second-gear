@@ -15,7 +15,7 @@ export const CONSENT_MAX_AGE_MS = 15 * 60 * 1000;
 /** Tolerated clock skew for tokens stamped slightly "in the future". */
 const MAX_FUTURE_SKEW_MS = 5 * 1000;
 
-export type ConsentErrorKind = "missing" | "malformed" | "bad_signature" | "wrong_version" | "expired" | "future" | "replayed";
+export type ConsentErrorKind = "missing" | "malformed" | "bad_signature" | "wrong_version" | "expired" | "future" | "replayed" | "session_mismatch";
 
 export class ConsentError extends Error {
   readonly kind: ConsentErrorKind;
@@ -35,12 +35,14 @@ export interface VerifiedConsent {
   issuedAt: number;
   ipAddress?: string;
   userAgent?: string;
+  liveAccessAuthorized?: boolean;
 }
 
 interface ConsentPayload {
   v: string;
   iat: number;
   jti: string;
+  sid?: string;
 }
 
 // Kept on globalThis so dev-server module reloads don't invalidate live tokens.
@@ -75,12 +77,12 @@ export function assertConsentRuntime(env: Record<string, string | undefined> = p
  * Mints a consent token after validating the buyer's approval. Only the
  * consent flag and text version come from the client; the time is the server's.
  */
-export function issueConsentToken(body: unknown, now: number = Date.now()): { consentToken: string; expiresAt: string } {
+export function issueConsentToken(body: unknown, now: number = Date.now(), sessionId?: string): { consentToken: string; expiresAt: string } {
   const input = (body ?? {}) as { softPullAuthorized?: unknown; textVersion?: unknown };
   if (input.softPullAuthorized !== true) throw new ConsentError("missing");
   if (input.textVersion !== SOFT_PULL_CONSENT_VERSION) throw new ConsentError("wrong_version");
 
-  const payload: ConsentPayload = { v: SOFT_PULL_CONSENT_VERSION, iat: now, jti: randomBytes(16).toString("hex") };
+  const payload: ConsentPayload = { v: SOFT_PULL_CONSENT_VERSION, iat: now, jti: randomBytes(16).toString("hex"), ...(sessionId ? { sid: sessionId } : {}) };
   const encoded = b64url(Buffer.from(JSON.stringify(payload)));
   return { consentToken: `${encoded}.${sign(encoded)}`, expiresAt: new Date(now + CONSENT_MAX_AGE_MS).toISOString() };
 }
@@ -94,6 +96,7 @@ export async function consumeConsentToken(
   context: { ipAddress?: string; userAgent?: string } = {},
   now: number = Date.now(),
   replayStore?: ConsentReplayStore,
+  expectedSessionId?: string,
 ): Promise<VerifiedConsent> {
   if (typeof token !== "string" || token.length === 0) throw new ConsentError("missing");
   const [encoded, signature, extra] = token.split(".");
@@ -110,6 +113,7 @@ export async function consumeConsentToken(
     throw new ConsentError("malformed");
   }
   if (typeof payload?.iat !== "number" || typeof payload.jti !== "string") throw new ConsentError("malformed");
+  if (expectedSessionId && (payload.sid !== expectedSessionId || !/^[a-f0-9]{64}$/.test(payload.sid))) throw new ConsentError("session_mismatch");
   if (payload.v !== SOFT_PULL_CONSENT_VERSION) throw new ConsentError("wrong_version");
   if (payload.iat > now + MAX_FUTURE_SKEW_MS) throw new ConsentError("future");
   if (now - payload.iat > CONSENT_MAX_AGE_MS) throw new ConsentError("expired");

@@ -12,6 +12,7 @@
     "nessie:seed": "node scripts/nessie-seed.mjs"
   },
   "dependencies": {
+    "@upstash/ratelimit": "^2.2.0",
     "@upstash/redis": "^1.39.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.61.0",

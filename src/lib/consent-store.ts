@@ -25,6 +25,28 @@ export class ConsentConfigurationError extends Error {
   }
 }
 
+const redisState = globalThis as typeof globalThis & {
+  __secondGearUpstash?: { url: string; token: string; client: Redis };
+};
+
+export function getUpstashRedis(env: Record<string, string | undefined> = process.env): Redis {
+  const mode = env.CONSENT_STORE?.trim().toLowerCase();
+  const url = env.UPSTASH_REDIS_REST_URL?.trim();
+  const token = env.UPSTASH_REDIS_REST_TOKEN?.trim();
+  if (mode !== "upstash" && (url || token)) {
+    throw new ConsentConfigurationError("set CONSENT_STORE=upstash when using Upstash Redis");
+  }
+  if (!url || !token) {
+    throw new ConsentConfigurationError("CONSENT_STORE=upstash requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN");
+  }
+  if (redisState.__secondGearUpstash?.url === url && redisState.__secondGearUpstash.token === token) {
+    return redisState.__secondGearUpstash.client;
+  }
+  const client = new Redis({ url, token });
+  redisState.__secondGearUpstash = { url, token, client };
+  return client;
+}
+
 /** Local-only store for development and tests. Production rejects this mode. */
 export class InMemoryConsentReplayStore implements ConsentReplayStore {
   private readonly entries = new Map<string, number>();
@@ -69,13 +91,5 @@ export function createConsentReplayStore(env: Record<string, string | undefined>
     return localStoreState.__secondGearConsentReplayStore;
   }
 
-  const url = env.UPSTASH_REDIS_REST_URL?.trim();
-  const token = env.UPSTASH_REDIS_REST_TOKEN?.trim();
-  if (mode !== "upstash" && (url || token)) {
-    throw new ConsentConfigurationError("set CONSENT_STORE=upstash when using Upstash Redis");
-  }
-  if (!url || !token) {
-    throw new ConsentConfigurationError("CONSENT_STORE=upstash requires UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN");
-  }
-  return new UpstashConsentReplayStore(new Redis({ url, token }));
+  return new UpstashConsentReplayStore(getUpstashRedis(env));
 }

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/pipeline/route";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 import { issueConsentToken, SOFT_PULL_CONSENT_VERSION } from "@/lib/consent";
 import { getAccountLoans, LOANS_UNAVAILABLE } from "@/lib/nessie/client";
 import type { PipelineResult } from "@/lib/types";
@@ -37,6 +38,8 @@ async function start(options: MockNessieOptions = {}) {
 
 beforeEach(() => {
   vi.stubEnv("CONSENT_STORE", "memory");
+  vi.stubEnv("RATE_LIMIT_MODE", "memory");
+  __resetRateLimitsForTests();
   cwd = mkdtempSync(join(tmpdir(), "nessie-seed-test-"));
 });
 

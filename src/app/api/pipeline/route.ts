@@ -6,9 +6,14 @@ import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
 import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
 import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
+import { assertLiveCrsRequest, LiveCrsAccessError } from "@/lib/crs/guard";
 import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
 import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
+import { assertRequestOrigin, getRequestIdentity, OriginConfigurationError } from "@/lib/request-identity";
+import { getSessionId } from "@/lib/session";
+import { enforceRateLimits, RateLimitError } from "@/lib/rate-limit";
+import { recordSecurityEvent } from "@/lib/monitoring";
 
 const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
   config: 503,
@@ -24,6 +29,7 @@ const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   config: 503,
   auth: 502,
   rate_limited: 503,
+  quota: 429,
   timeout: 502,
   upstream: 502,
   invalid_response: 502,
@@ -34,12 +40,32 @@ const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   not_soft_pull: 502,
 };
 
-/** First hop of x-forwarded-for, kept server-side as part of the consent record. */
-function clientIp(req: NextRequest): string | undefined {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
-}
-
 export async function POST(req: NextRequest) {
+  try {
+    assertRequestOrigin(req);
+  } catch (err) {
+    if (err instanceof OriginConfigurationError) return NextResponse.json({ error: err.userMessage }, { status: 503 });
+    return NextResponse.json({ error: "Request origin is not allowed." }, { status: 403 });
+  }
+  try {
+    assertLiveCrsRequest(req);
+  } catch (err) {
+    if (err instanceof LiveCrsAccessError) return NextResponse.json({ error: err.userMessage }, { status: 403 });
+    if (err instanceof CrsError) return NextResponse.json({ error: err.userMessage }, { status: 503 });
+    throw err;
+  }
+  const sessionId = getSessionId(req);
+  if (!sessionId && process.env.NODE_ENV !== "test") return NextResponse.json({ error: "A valid session is required." }, { status: 400 });
+  const identity = getRequestIdentity(req);
+  try {
+    await enforceRateLimits("pipeline-ip", [identity.ipKey]);
+    if (sessionId) await enforceRateLimits("pipeline-session", [sessionId]);
+  } catch (err) {
+    if (err instanceof RateLimitError) return NextResponse.json({ error: err.userMessage }, { status: 429, headers: { "retry-after": String(err.retryAfterSeconds) } });
+    if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) return NextResponse.json({ error: err.userMessage }, { status: 503 });
+    throw err;
+  }
+  recordSecurityEvent("pipeline_request");
   let need: BuyerNeed;
   let consentToken: unknown;
   try {
@@ -53,7 +79,8 @@ export async function POST(req: NextRequest) {
   // Consent comes first: no provider runs without a fresh, server-issued, unused token.
   let consent: VerifiedConsent;
   try {
-    consent = await consumeConsentToken(consentToken, { ipAddress: clientIp(req), userAgent: req.headers.get("user-agent") ?? undefined });
+    consent = await consumeConsentToken(consentToken, { ipAddress: identity.trustedIp ? identity.ipKey : undefined, userAgent: req.headers.get("user-agent") ?? undefined }, Date.now(), undefined, sessionId);
+    if (process.env.CRS_MODE?.trim().toLowerCase() === "live") consent.liveAccessAuthorized = true;
   } catch (err) {
     if (err instanceof ConsentError) return NextResponse.json({ error: err.userMessage }, { status: 400 });
     if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {
@@ -107,6 +134,10 @@ export async function POST(req: NextRequest) {
     if (err instanceof CrsError) {
       const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
       return NextResponse.json({ error: err.userMessage }, { status: CRS_ERROR_STATUS[err.kind], headers });
+    }
+    if (err instanceof LiveCrsAccessError) return NextResponse.json({ error: err.userMessage }, { status: 403 });
+    if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {
+      return NextResponse.json({ error: err.userMessage }, { status: 503 });
     }
     return NextResponse.json({ error: "The pipeline hit a snag. Try again." }, { status: 500 });
   }

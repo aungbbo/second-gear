@@ -16,6 +16,7 @@ import {
   stubNessieFetch,
 } from "@/lib/nessie/__tests__/fixtures";
 import type { PipelineResult } from "@/lib/types";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 
 // The other providers still simulate a few seconds of latency each.
 vi.setConfig({ testTimeout: 20000 });
@@ -37,14 +38,16 @@ afterEach(() => {
 // The credit step now needs explicit mode and consent; these Nessie-focused tests use the CRS mock.
 beforeEach(() => {
   vi.stubEnv("CONSENT_STORE", "memory");
+  vi.stubEnv("RATE_LIMIT_MODE", "memory");
   vi.stubEnv("CRS_MODE", "mock");
+  __resetRateLimitsForTests();
 });
 
 function pipelineRequest() {
   const { consentToken } = issueConsentToken({ softPullAuthorized: true, textVersion: SOFT_PULL_CONSENT_VERSION });
   return new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-forwarded-for": `192.0.2.${Math.floor(Math.random() * 200) + 1}` },
     body: JSON.stringify({ need: NEED, consentToken }),
   });
 }

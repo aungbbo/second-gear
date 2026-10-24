@@ -16,8 +16,14 @@ Set these in `.env.local` (server-only; never `NEXT_PUBLIC_`):
 | `CRS_PERSONA_SSN` | P05's 9-digit sandbox SSN from the CRS persona list. Not committed |
 | `CRS_BUREAU`, `CRS_CONFIG`, `CRS_BASE_URL` | Optional. Defaults: `experian`, `exp-prequal-vantage4`, `https://api-sandbox.stitchcredit.com/api` |
 | `CONSENT_STORE` | `memory` only for local development/tests; production must use `upstash` |
+| `RATE_LIMIT_MODE` | `memory` only for local development/tests; omit in production to require Upstash |
 | `CONSENT_SIGNING_SECRET` | Required in production and at least 32 bytes |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Required in production when `CONSENT_STORE=upstash`; used for atomic global one-time token consumption |
+| `APP_ORIGIN` | Required in production; exact allowed browser origin for API POST requests |
+| `CRS_LIVE_PULLS_ENABLED` | Must be `true` for any live CRS pull; keep `false` for public demos |
+| `CRS_LIVE_ACCESS_TOKEN` | Required restricted-access secret for live CRS; never send to browser code |
+| `CRS_GLOBAL_PULL_LIMIT`, `CRS_GLOBAL_PULL_WINDOW_SECONDS` | Optional global CRS quota; defaults to `5` per `86400` seconds |
+| `CRS_KILL_SWITCH_KEY` | Optional Redis key; value `disabled` immediately blocks live pulls |
 
 The account needs the bureau role for the bureau you call:
 

@@ -25,6 +25,8 @@ import {
 import type { PipelineResult } from "@/lib/types";
 import { expectNoLeaks, PII, SYNTH_PASSWORD, SYNTH_SSN, SYNTH_USERNAME } from "./fixtures";
 import { startMockCrs, type MockCrs, type ReportMode } from "./mock-crs-server";
+import { __resetCrsQuotaForTests } from "@/lib/crs/guard";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 
 vi.setConfig({ testTimeout: 30000 });
 
@@ -32,6 +34,10 @@ let crs: MockCrs;
 
 beforeEach(() => {
   vi.stubEnv("CONSENT_STORE", "memory");
+  vi.stubEnv("RATE_LIMIT_MODE", "memory");
+  vi.stubEnv("CRS_QUOTA_MODE", "memory");
+  __resetCrsQuotaForTests();
+  __resetRateLimitsForTests();
   __resetCrsAuthForTests();
   vi.mocked(mockSoftCredit).mockClear();
 });
@@ -45,6 +51,9 @@ afterEach(async () => {
 
 function liveCrsEnv() {
   vi.stubEnv("CRS_MODE", "live");
+  vi.stubEnv("CRS_LIVE_PULLS_ENABLED", "true");
+  vi.stubEnv("CRS_LIVE_ACCESS_TOKEN", "synthetic-live-access-token-0123456789012345");
+  vi.stubEnv("APP_ORIGIN", "http://localhost");
   vi.stubEnv("CRS_USERNAME", SYNTH_USERNAME);
   vi.stubEnv("CRS_PASSWORD", SYNTH_PASSWORD);
   vi.stubEnv("CRS_TEST_PERSONA", "P05");
@@ -72,7 +81,7 @@ const token = () => issueConsentToken({ softPullAuthorized: true, textVersion: S
 function request(body: object) {
   return new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
-    headers: { "content-type": "application/json", "user-agent": "vitest", "x-forwarded-for": "203.0.113.9, 10.0.0.1" },
+    headers: { "content-type": "application/json", "user-agent": "vitest", origin: "http://localhost", "x-crs-live-access-token": "synthetic-live-access-token-0123456789012345", "x-forwarded-for": "203.0.113.9, 10.0.0.1" },
     body: JSON.stringify(body),
   });
 }

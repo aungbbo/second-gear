@@ -3,6 +3,8 @@ import { getCrsToken, invalidateCrsToken } from "@/lib/crs/auth";
 import type { LiveCrsConfig } from "@/lib/crs/config";
 import { CRS_UNAVAILABLE, CrsError } from "@/lib/crs/errors";
 import type { CrsCreditReportResponse } from "@/lib/crs/types";
+import { recordSecurityEvent } from "@/lib/monitoring";
+import { reserveCrsPull } from "@/lib/crs/guard";
 
 export const REPORT_TIMEOUT_MS = 20_000;
 
@@ -45,6 +47,7 @@ export async function orderCreditReport(cfg: LiveCrsConfig, consent: VerifiedCon
 
   const endpoint = describeReportEndpoint(cfg);
   const token = await getCrsToken(cfg);
+  await reserveCrsPull(consent);
 
   let response: Response;
   try {
@@ -61,6 +64,7 @@ export async function orderCreditReport(cfg: LiveCrsConfig, consent: VerifiedCon
   }
 
   const json = await response.json().catch(() => undefined);
+  if ((json as { billable?: unknown } | undefined)?.billable === true) recordSecurityEvent("crs_billable_activity", "failed");
 
   if (response.status === 401) {
     invalidateCrsToken();

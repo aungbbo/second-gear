@@ -118,6 +118,14 @@ describe("consumeConsentToken", () => {
     );
   });
 
+  it("binds a consent token to its issuing session", async () => {
+    const sessionA = "a".repeat(64);
+    const sessionB = "b".repeat(64);
+    const { consentToken } = issueConsentToken(APPROVAL, Date.now(), sessionA);
+    expect(await rejectionKind(() => consumeConsentToken(consentToken, {}, Date.now(), undefined, sessionB))).toBe("session_mismatch");
+    await expect(consumeConsentToken(consentToken, {}, Date.now(), undefined, sessionA)).resolves.toMatchObject({ version: SOFT_PULL_CONSENT_VERSION });
+  });
+
   it("fails closed when shared storage fails", async () => {
     const { consentToken } = issueConsentToken(APPROVAL);
     const store: ConsentReplayStore = { claim: async () => { throw new ConsentStorageError(); } };

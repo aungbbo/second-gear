@@ -2,6 +2,7 @@ export type CrsErrorKind =
   | "config"
   | "auth"
   | "rate_limited"
+  | "quota"
   | "timeout"
   | "upstream"
   | "invalid_response"
