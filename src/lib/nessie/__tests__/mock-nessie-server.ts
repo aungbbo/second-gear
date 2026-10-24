@@ -12,8 +12,8 @@ import type { AddressInfo } from "node:net";
 type Doc = Record<string, unknown> & { _id: string };
 
 export interface MockNessieOptions {
-  /** Respond 404 to every `/accounts/:id/loans` request. */
-  loansUnsupported?: boolean;
+  /** Respond 404 to every `/accounts/:id/loans` request (a broken loans route). */
+  loansNotFound?: boolean;
   /** Store transaction/purchase/payment dates as "today", like a sandbox ignoring back-dates. */
   rewriteDates?: boolean;
   /** Fail the Nth POST (1-based) with this HTTP status and body. */
@@ -96,7 +96,7 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
         return send(res, 200, state.accounts.filter((a) => a.customer_id === parts[1]));
       }
       if (parts[0] === "accounts" && RESOURCES.includes(parts[2] as (typeof RESOURCES)[number])) {
-        if (parts[2] === "loans" && options.loansUnsupported) return send(res, 404, { code: 404, message: "Not found" });
+        if (parts[2] === "loans" && options.loansNotFound) return send(res, 404, { code: 404, message: "Not found" });
         return send(res, 200, state.records[parts[2]].filter((r) => r.account_id === parts[1]));
       }
       return send(res, 404, { code: 404, message: "Not found" });
@@ -128,7 +128,7 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
       state.accounts.push(account);
       created = account;
     } else if (parts[0] === "accounts" && RESOURCES.includes(parts[2] as (typeof RESOURCES)[number])) {
-      if (parts[2] === "loans" && options.loansUnsupported) return send(res, 404, { code: 404, message: "Not found" });
+      if (parts[2] === "loans" && options.loansNotFound) return send(res, 404, { code: 404, message: "Not found" });
       if (!state.accounts.some((a) => a._id === parts[1])) return send(res, 404, { code: 404, message: "Invalid account id" });
       const record: Doc & { account_id: string } = { status: "pending", ...body, _id: mintId(), account_id: parts[1] };
       if (options.rewriteDates) {

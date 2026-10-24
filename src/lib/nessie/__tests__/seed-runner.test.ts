@@ -5,7 +5,9 @@ import { join, resolve } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/pipeline/route";
+import { getAccountLoans, LOANS_UNAVAILABLE } from "@/lib/nessie/client";
 import type { PipelineResult } from "@/lib/types";
+import { buildSeedDataset } from "../../../../scripts/nessie-seed/dataset.mjs";
 import { NEED, REAL_FORMAT_KEY, expectNoLeaks } from "./fixtures";
 import { startMockNessie, type MockNessie, type MockNessieOptions } from "./mock-nessie-server";
 
@@ -123,7 +125,6 @@ describe("seed runner against a mock Nessie", () => {
     expect(manifest).toMatchObject({
       complete: true,
       readBackMatches: true,
-      loansSupported: true,
       canary: { ok: true },
       counts: { deposits: 9, withdrawals: 3, bills: 5, purchases: 24, loans: 1 },
     });
@@ -234,12 +235,50 @@ describe("seed runner against a mock Nessie", () => {
     expect(readManifest()).toMatchObject({ complete: false, canary: { ok: false, changed: ["transaction_date"] } });
   });
 
-  it("completes without loans when the endpoint is unsupported and records it", async () => {
-    await start({ loansUnsupported: true });
+  it("creates the loan with the documented schema and reads it back", async () => {
+    await start();
+    expect((await runSeed(["--apply"])).code).toBe(0);
+    const manifest = readManifest();
+    const { loans } = buildSeedDataset({ asOf: manifest.asOf });
+
+    const loanPosts = server.requests.filter((r) => r.method === "POST" && r.path.endsWith("/loans"));
+    expect(loanPosts.map((r) => r.path)).toEqual([`/accounts/${manifest.accountIds.checking}/loans`]);
+    expect(server.records.loans).toHaveLength(1);
+    expect(server.records.loans[0]).toMatchObject({ ...loans[0].body, account_id: manifest.accountIds.checking });
+
+    const cfg = { mode: "live" as const, apiKey: REAL_FORMAT_KEY, customerId: manifest.customerId, baseUrl: server.baseUrl };
+    const fetched = await getAccountLoans(cfg, manifest.accountIds.checking);
+    expect(fetched.records).toHaveLength(1);
+    expect(fetched.records[0]).toMatchObject({ monthly_payment: 140, status: "approved", type: "small business" });
+  });
+
+  it("counts the seeded loan exactly once, even if the sandbox holds a duplicate copy", async () => {
+    await start();
+    expect((await runSeed(["--apply"])).code).toBe(0);
+    const manifest = readManifest();
+    server.records.loans.push({ ...server.records.loans[0], _id: "5f0000000000000000000999" });
+
+    const { status, body } = await pipeline(manifest.customerId, 600);
+    expect(status).toBe(200);
+    // 140 loan + 36 card minimum = 176 → 180, not 320.
+    expect(body.affordability.existingDebtPayments).toBe(180);
+    expect(body.affordability).toMatchObject({ maxSustainablePayment: 440, recommendedPayment: 385 });
+  });
+
+  it("stops the seed when the loans endpoint fails, and the pipeline refuses to assume zero debt", async () => {
+    await start({ loansNotFound: true });
     const run = await runSeed(["--apply"]);
-    expect(run.code).toBe(0);
-    expect(run.output).toContain("loans endpoint not available");
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("POST /accounts/:id/loans: HTTP 404");
+    expectCleanOutput(run);
     expect(server.postCount).toBe(FULL_SEED_POSTS - 1);
-    expect(readManifest()).toMatchObject({ complete: true, readBackMatches: true, loansSupported: false });
+    const manifest = readManifest();
+    expect(manifest.complete).toBe(false);
+    expect(manifest.counts.loans).toBeUndefined();
+
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { status, body } = await pipeline(manifest.customerId, 600);
+    expect(status).toBe(502);
+    expect(body).toEqual({ error: LOANS_UNAVAILABLE });
   });
 });

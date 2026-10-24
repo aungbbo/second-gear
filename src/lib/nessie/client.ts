@@ -20,6 +20,7 @@ const UNAVAILABLE = "Couldn't reach the bank data service. Try again in a minute
 export const CUSTOMER_NOT_FOUND = "We couldn't find that bank customer.";
 export const NO_ACCOUNTS = "No accounts for this Nessie customer.";
 export const UNREADABLE_ACCOUNTS = "The bank returned account data we couldn't read.";
+export const LOANS_UNAVAILABLE = "We couldn't load your loan details, so we can't estimate a safe payment yet.";
 
 /** "GET /customers/:id/accounts" — the route shape, never the ids, host, or key. */
 export function describeEndpoint(path: string): string {
@@ -138,18 +139,20 @@ export function getAccountBills(cfg: LiveNessieConfig, accountId: string) {
 }
 
 /**
- * Loans are only documented in the iOS SDK, so a 404 here means the
- * endpoint isn't available rather than that the customer is missing.
+ * Loans are part of the documented API, so any failure — a 404 included —
+ * is an error. Only a successful empty list means "no loans"; assuming zero
+ * debt on a failed read would quietly inflate the safe payment.
  */
-export async function getAccountLoans(
-  cfg: LiveNessieConfig,
-  accountId: string,
-): Promise<ListResult<NessieLoan> & { supported: boolean }> {
+export async function getAccountLoans(cfg: LiveNessieConfig, accountId: string): Promise<ListResult<NessieLoan>> {
   try {
-    const result = await getList<NessieLoan>(cfg, `/accounts/${encodeURIComponent(accountId)}/loans`, "monthly_payment");
-    return { ...result, supported: true };
+    return await getList<NessieLoan>(cfg, `/accounts/${encodeURIComponent(accountId)}/loans`, "monthly_payment");
   } catch (err) {
-    if (err instanceof NessieError && err.kind === "not_found") return { records: [], dropped: 0, supported: false };
+    if (err instanceof NessieError && err.kind === "not_found") {
+      throw new NessieError("upstream", LOANS_UNAVAILABLE, {
+        status: 404,
+        detail: `HTTP 404 from ${describeEndpoint("/accounts/:id/loans")} — refusing to assume zero debt`,
+      });
+    }
     throw err;
   }
 }
@@ -223,7 +226,6 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     purchases: [],
     bills: [],
     loans: [],
-    loansSupported: true,
     dropped: accountsResult.dropped,
   };
 
@@ -233,7 +235,6 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     snapshot.purchases.push(...tag(entry.purchases.records, entry.accountId));
     snapshot.bills.push(...tag(entry.bills.records, entry.accountId));
     snapshot.loans.push(...tag(entry.loans.records, entry.accountId));
-    snapshot.loansSupported &&= entry.loans.supported;
     snapshot.dropped +=
       entry.deposits.dropped +
       entry.withdrawals.dropped +

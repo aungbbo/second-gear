@@ -28,6 +28,7 @@ After `--apply`:
 - **No retries on POST,** so a retry can never create a duplicate. A failure stops the run and leaves a `complete: false` manifest. There is no rollback, and a partial customer is harmless.
 - **Canary.** Before the bulk of the writes, the script posts one back-dated deposit and reads it back. If Nessie changed its date, amount or description, the script stops with exit code 3.
 - **Read-back.** After writing, every collection is fetched again and compared with the dataset. Mismatches are reported by field name.
+- **Loans are required.** `POST`/`GET /accounts/{id}/loans` are documented Nessie endpoints. A failed loan POST stops the seed. On the app side, a failed loans read (a 404 included) fails the pipeline with 502 "We couldn't load your loan details…" rather than assuming zero debt. Only a successful empty list means "no loans".
 - **No identifiers printed.** The key, customer ID, account IDs and merchant IDs never appear in output. Full IDs go only to `.nessie-seed.local.json`, which is gitignored with mode 600.
 
 ### Data aging

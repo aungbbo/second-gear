@@ -50,7 +50,6 @@ describe.skipIf(process.env.NESSIE_LIVE_TEST !== "1" || !manifestPath)("Nessie s
       persona: string;
       asOf: string;
       customerId: string;
-      loansSupported: boolean;
       complete: boolean;
     };
     expect(manifest.complete, "manifest records a complete seed").toBe(true);
@@ -58,9 +57,7 @@ describe.skipIf(process.env.NESSIE_LIVE_TEST !== "1" || !manifestPath)("Nessie s
 
     const asOfNoon = new Date(`${manifest.asOf}T12:00:00Z`);
     const expected = analyzeSnapshotWithStats(
-      seedSnapshot(buildSeedDataset({ asOf: manifest.asOf, personaId: manifest.persona }), {
-        loansSupported: manifest.loansSupported,
-      }),
+      seedSnapshot(buildSeedDataset({ asOf: manifest.asOf, personaId: manifest.persona })),
       NEED,
       asOfNoon,
     );

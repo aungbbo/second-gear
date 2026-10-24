@@ -80,7 +80,6 @@ export function baselineSnapshot(): NessieSnapshot {
       { _id: "l1", accountId: "chk", type: "auto", status: "approved", monthly_payment: 200, amount: 8000, creation_date: "2025-01-01" },
       { _id: "l2", accountId: "chk", type: "home", status: "declined", monthly_payment: 500, amount: 90000, creation_date: "2025-02-01" },
     ],
-    loansSupported: true,
     dropped: 0,
   };
 }
@@ -133,7 +132,7 @@ export function stubNessieFetch(routes: Record<string, RouteValue>) {
  * Turns the seed dataset (scripts/nessie-seed/dataset.mjs) into the snapshot
  * Nessie would return after a faithful apply, with synthetic ids.
  */
-export function seedSnapshot(dataset: SeedDataset, { loansSupported = true } = {}): NessieSnapshot {
+export function seedSnapshot(dataset: SeedDataset): NessieSnapshot {
   const accountId = (key: string) => `acct-${key}`;
   const tagged = <R extends { account: string; body: object }>(records: readonly R[], prefix: string) =>
     records.map((r, i) => ({ ...(r.body as R["body"]), _id: `${prefix}-${i}`, accountId: accountId(r.account) }));
@@ -149,8 +148,7 @@ export function seedSnapshot(dataset: SeedDataset, { loansSupported = true } = {
       merchant_id: `merchant-${p.merchant}`,
     })),
     bills: tagged(dataset.bills, "bill"),
-    loans: loansSupported ? tagged(dataset.loans, "loan") : [],
-    loansSupported,
+    loans: tagged(dataset.loans, "loan"),
     dropped: 0,
   };
 }

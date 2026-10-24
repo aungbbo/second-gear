@@ -83,7 +83,6 @@ export interface NessieSnapshot {
   purchases: WithAccount<NessiePurchase>[];
   bills: WithAccount<NessieBill>[];
   loans: WithAccount<NessieLoan>[];
-  loansSupported: boolean;
   /** Records discarded because they failed shape validation. */
   dropped: number;
 }

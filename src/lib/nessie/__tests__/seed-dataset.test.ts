@@ -8,8 +8,8 @@ const AS_OF_NOON = new Date(`${AS_OF}T12:00:00Z`);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const dataset = buildSeedDataset({ asOf: AS_OF });
-const analyze = (maxMonthlyPayment: number, loansSupported = true) =>
-  analyzeSnapshotWithStats(seedSnapshot(dataset, { loansSupported }), { ...NEED, maxMonthlyPayment }, AS_OF_NOON);
+const analyze = (maxMonthlyPayment: number, snapshot = seedSnapshot(dataset)) =>
+  analyzeSnapshotWithStats(snapshot, { ...NEED, maxMonthlyPayment }, AS_OF_NOON);
 
 const datedRecords = () => [
   ...dataset.deposits.map((r) => r.body.transaction_date),
@@ -37,13 +37,20 @@ describe("seed dataset → analyzer", () => {
     expect(analyze(600).result).toMatchObject({ maxSustainablePayment: 440, recommendedPayment: 385 });
   });
 
-  it("still analyzes cleanly if the sandbox has no loans endpoint", () => {
-    expect(analyze(600, false).result).toMatchObject({
-      existingDebtPayments: 40,
-      discretionaryBuffer: 1880,
-      maxSustainablePayment: 580,
-      recommendedPayment: 510,
-    });
+  it("counts the loan's monthly_payment exactly once in debt", () => {
+    const withLoan = analyze(600).result.existingDebtPayments;
+    const noLoans = seedSnapshot(dataset);
+    noLoans.loans = [];
+    // 140 loan + max(25, 2% × 1800) card minimum = 176 → 180; card alone = 36 → 40.
+    expect(withLoan).toBe(180);
+    expect(analyze(600, noLoans).result.existingDebtPayments).toBe(40);
+
+    // A re-seeded copy of the same loan (new id, same content) must not double it.
+    const doubled = seedSnapshot(dataset);
+    doubled.loans.push({ ...doubled.loans[0], _id: "loan-copy" });
+    const { result, stats } = analyze(600, doubled);
+    expect(result.existingDebtPayments).toBe(180);
+    expect(stats.duplicates).toBe(1);
   });
 
   it("is clean data: no malformed, invalid-date, or duplicate records", () => {

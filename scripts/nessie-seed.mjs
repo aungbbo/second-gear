@@ -113,10 +113,9 @@ function createClient({ baseUrl, apiKey, allowWrites }) {
       return res.json;
     },
     /** One attempt only — a retried POST could create a duplicate. */
-    async post(path, body, { allow404 = false } = {}) {
+    async post(path, body) {
       await sleep(POST_GAP_MS);
       const res = await send("POST", path, body);
-      if (allow404 && res.status === 404) return null;
       const created = res.json?.objectCreated;
       if (res.status !== 201 || !created?._id) {
         const message = res.json?.message ? ` — ${scrub(res.json.message)}` : "";
@@ -282,17 +281,9 @@ async function apply(client, dataset, pre, manifest, save) {
   await postAll("bills", dataset.bills, "bills");
   await postAll("purchases", dataset.purchases, "purchases", (r) => ({ merchant_id: manifest.merchantIds[r.merchant], ...r.body }));
 
-  manifest.loansSupported = true;
-  for (const r of dataset.loans) {
-    const created = await client.post(`${accountPath(r.account)}/loans`, r.body, { allow404: true });
-    if (created === null) {
-      manifest.loansSupported = false;
-      console.warn("  ! loans endpoint not available (404) — skipped; the analyzer treats loans as unsupported");
-      break;
-    }
-    manifest.counts.loans = (manifest.counts.loans ?? 0) + 1;
-  }
-  step(`loans ${manifest.counts.loans ?? 0}`);
+  // Loans are a documented endpoint; a failed loan POST stops the run like any other,
+  // because a persona missing its debt would overstate what it can afford.
+  await postAll("loans", dataset.loans, "loans");
 
   manifest.readBack = await readBack(client, dataset, manifest);
   manifest.readBackMatches = manifest.readBack.mismatches.length === 0;
@@ -305,7 +296,7 @@ async function readBack(client, dataset, manifest) {
     ["withdrawals", "withdrawals", "description", ["transaction_date", "amount", "description"]],
     ["bills", "bills", "nickname", ["payment_amount", "nickname", "status", "payment_date", "recurring_date"]],
     ["purchases", "purchases", "description", ["purchase_date", "amount", "description"]],
-    ...(manifest.loansSupported ? [["loans", "loans", "description", ["monthly_payment", "status", "type", "description"]]] : []),
+    ["loans", "loans", "description", ["monthly_payment", "status", "type", "amount", "credit_score", "description"]],
   ];
   const mismatches = [];
   const counts = {};
@@ -390,7 +381,6 @@ async function main() {
       "",
       `customer created (id saved to ${MANIFEST_PATH})`,
       `counts             ${JSON.stringify(manifest.counts)}`,
-      `loans supported    ${manifest.loansSupported}`,
       `read-back          ${manifest.readBackMatches ? "matches the dataset" : `${manifest.readBack.mismatches.length} mismatch(es):`}`,
       ...(manifest.readBackMatches ? [] : manifest.readBack.mismatches.map((m) => `  - ${scrub(m)}`)),
       `next               set NESSIE_CUSTOMER_ID in .env.local to the manifest's customerId, then restart npm run dev`,

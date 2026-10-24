@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CUSTOMER_NOT_FOUND,
+  LOANS_UNAVAILABLE,
   NO_ACCOUNTS,
   UNREADABLE_ACCOUNTS,
   describeEndpoint,
@@ -125,9 +126,19 @@ describe("list getters", () => {
     expect(result.dropped).toBe(4);
   });
 
-  it("treats a loans 404 as unsupported instead of failing", async () => {
+  it("treats a successful empty loans list as no loans", async () => {
+    stubNessieFetch({ "/accounts/chk/loans": [] });
+    await expect(getAccountLoans(LIVE_CONFIG, "chk")).resolves.toEqual({ records: [], dropped: 0 });
+  });
+
+  it("fails on a loans 404 instead of assuming zero debt", async () => {
     stubNessieFetch({});
-    await expect(getAccountLoans(LIVE_CONFIG, "chk")).resolves.toEqual({ records: [], dropped: 0, supported: false });
+    const err = await catchError(getAccountLoans(LIVE_CONFIG, "chk"));
+    expect(err.kind).toBe("upstream");
+    expect(err.status).toBe(404);
+    expect(err.userMessage).toBe(LOANS_UNAVAILABLE);
+    expect(err.message).toContain("refusing to assume zero debt");
+    expectNoLeaks(err.message, SENSITIVE);
   });
 });
 
@@ -140,19 +151,18 @@ describe("fetchNessieSnapshot", () => {
     expect(snapshot.deposits.every((d) => d.accountId === "chk")).toBe(true);
     expect(snapshot.purchases.map((p) => p.accountId)).toEqual(["cc", "cc"]);
     expect(snapshot.loans).toHaveLength(2);
-    expect(snapshot.loansSupported).toBe(true);
     expect(snapshot.dropped).toBe(0);
     // 1 accounts call + 5 resources × 3 accounts, all GET.
     expect(fetchMock).toHaveBeenCalledTimes(16);
   });
 
-  it("reports loans as unsupported when the endpoint is missing", async () => {
+  it("fails the snapshot when any account's loans can't be read", async () => {
     const routes = baselineRoutes();
-    for (const path of Object.keys(routes)) if (path.endsWith("/loans")) delete routes[path];
+    delete routes["/accounts/sav/loans"];
     stubNessieFetch(routes);
-    const snapshot = await fetchNessieSnapshot(LIVE_CONFIG);
-    expect(snapshot.loansSupported).toBe(false);
-    expect(snapshot.loans).toEqual([]);
+    const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
+    expect(err.kind).toBe("upstream");
+    expect(err.userMessage).toBe(LOANS_UNAVAILABLE);
   });
 
   it("maps an accounts 404 to not_found with a credentials hint", async () => {
