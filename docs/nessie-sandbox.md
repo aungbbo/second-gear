@@ -66,7 +66,7 @@ Transactions are dated relative to the seed day (2–80 days old). The analyzer 
 | Persona | State | Manifest |
 |---|---|---|
 | `sg-demo-subprime-01` | **Broken, do not use.** Fully posted (9 deposits, 3 withdrawals, 5 bills, 24 purchases, 1 loan), but its bills were posted without `upcoming_payment_date` (and the one-off ones also without `recurring_date`), so its bill list returns 400 forever (no PUT/DELETE allowed). The app correctly fails closed (502) on it | `.nessie-seed.sg-demo-subprime-01.broken.local.json` |
-| `sg-demo-subprime-02` | The default persona. **Partially seeded:** customer, 3 accounts, 3 reused merchants, and the deposit and withdrawal canaries are in. Its bill canary was refused cleanly (`BillCreate` rejects `upcoming_payment_date`), so nothing broke. Continue with `--apply --resume --canary-only`, then `--apply --resume` | `.nessie-seed.local.json` |
+| `sg-demo-subprime-02` | **Seeded and verified (asOf 2026-10-24).** 9 deposits, 6 withdrawals, 2 recurring bills (server-computed `upcoming_payment_date` present), 24 purchases, 1 loan; read-back matches the dataset, and `/api/pipeline` returned 200 with $400 → 400/350 and $600 → 440/385. Results are exact only around the seed date (see Data aging) | `.nessie-seed.local.json` |
 
 ## Persona profile (`sg-demo-subprime-02`)
 
