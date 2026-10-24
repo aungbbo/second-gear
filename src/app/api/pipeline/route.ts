@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
   try {
     await enforceRateLimits("pipeline-ip", [identity.ipKey]);
     if (sessionId) await enforceRateLimits("pipeline-session", [sessionId]);
+    await enforceRateLimits("pipeline-global", ["global"]);
   } catch (err) {
     if (err instanceof RateLimitError) return NextResponse.json({ error: err.userMessage }, { status: 429, headers: { "retry-after": String(err.retryAfterSeconds) } });
     if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) return NextResponse.json({ error: err.userMessage }, { status: 503 });

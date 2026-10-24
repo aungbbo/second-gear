@@ -27,6 +27,12 @@ describe("distributed-control contracts", () => {
     expect(results.filter((result) => result.status === "rejected").every((result) => result.reason instanceof RateLimitError)).toBe(true);
   });
 
+  it("maintains a separate global pipeline quota", async () => {
+    const results = await Promise.allSettled(Array.from({ length: 101 }, () => enforceRateLimits("pipeline-global", ["global"])));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(100);
+    expect(results.filter((result) => result.status === "rejected").every((result) => result.reason instanceof RateLimitError)).toBe(true);
+  });
+
   it("rejects live CRS without explicit authorization", () => {
     vi.stubEnv("CRS_MODE", "live");
     vi.stubEnv("CRS_LIVE_PULLS_ENABLED", "true");

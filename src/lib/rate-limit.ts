@@ -2,7 +2,7 @@ import { Ratelimit, type Duration } from "@upstash/ratelimit";
 import { getUpstashRedis, ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
 import { recordSecurityEvent } from "@/lib/monitoring";
 
-export type RateLimitScope = "consent-ip" | "consent-session" | "consent-global" | "pipeline-ip" | "pipeline-session";
+export type RateLimitScope = "consent-ip" | "consent-session" | "consent-global" | "pipeline-ip" | "pipeline-session" | "pipeline-global";
 
 const POLICIES: Record<RateLimitScope, { limit: number; window: Duration }> = {
   "consent-ip": { limit: 5, window: "15 m" },
@@ -10,6 +10,7 @@ const POLICIES: Record<RateLimitScope, { limit: number; window: Duration }> = {
   "consent-global": { limit: 100, window: "1 h" },
   "pipeline-ip": { limit: 5, window: "15 m" },
   "pipeline-session": { limit: 3, window: "15 m" },
+  "pipeline-global": { limit: 100, window: "1 h" },
 };
 
 const localState = globalThis as typeof globalThis & {
