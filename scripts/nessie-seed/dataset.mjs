@@ -1,4 +1,6 @@
 // Demo persona for the Nessie sandbox. Pure data — no I/O, no ids, no keys.
+// Every payload value must stay ASCII: the real sandbox rejected the first
+// non-ASCII payload (an em dash in a deposit description) with HTTP 400.
 // Shared by scripts/nessie-seed.mjs and the offline dataset tests; never
 // imported by the app.
 
@@ -64,7 +66,7 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
   const deposits = [
     ...[3, 17, 33, 47, 63, 77].map((d) => ({
       account: /** @type {AccountKey} */ ("checking"),
-      body: { medium: "balance", transaction_date: day(d), amount: 1650, description: tag(`Payroll — Acme Logistics (${day(d)})`) },
+      body: { medium: "balance", transaction_date: day(d), amount: 1650, description: tag(`Payroll - Acme Logistics (${day(d)})`) },
     })),
     ...[10, 40, 70].map((d) => ({
       account: /** @type {AccountKey} */ ("checking"),

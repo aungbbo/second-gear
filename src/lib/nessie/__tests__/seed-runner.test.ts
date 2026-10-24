@@ -281,4 +281,174 @@ describe("seed runner against a mock Nessie", () => {
     expect(status).toBe(502);
     expect(body).toEqual({ error: LOANS_UNAVAILABLE });
   });
+
+  describe("HTTP 400 diagnostics", () => {
+    // The real sandbox rejected the canary deposit with a 400 whose body had no `message`.
+    const CANARY_POST = 3 + 1 + 3 + 1;
+
+    it.each([
+      ["plain text", { body: `Bad Request: transaction_date for https://x.test/a?key=${REAL_FORMAT_KEY}`, raw: true }, "body Bad Request: transaction_date for <url>"],
+      ["JSON without message", { body: { code: 400, error: "invalid date" } }, 'body {"code":400,"error":"invalid date"}'],
+      ["JSON string", { body: "Invalid medium" }, 'body "Invalid medium"'],
+      ["empty", { body: "", raw: true }, "empty body"],
+    ])("reports a 400 with a %s body, scrubbed", async (_label, reply, expected) => {
+      await start({ failPost: { nth: CANARY_POST, status: 400, ...reply } });
+      const run = await runSeed(["--apply"]);
+      expect(run.code).toBe(1);
+      expect(run.output).toContain(`POST /accounts/:id/deposits: HTTP 400 — ${expected}`);
+      expectCleanOutput(run);
+      expect(server.postCount, "nothing is posted after the failure").toBe(CANARY_POST);
+      const manifest = readManifest();
+      expect(manifest.complete).toBe(false);
+      expect(manifest.lastError).toContain("HTTP 400");
+      expectNoLeaks(JSON.stringify(manifest.lastError), [REAL_FORMAT_KEY, "key="]);
+    });
+
+    it("clips very long error bodies", async () => {
+      await start({ failPost: { nth: CANARY_POST, status: 400, body: "x".repeat(2000), raw: true } });
+      const run = await runSeed(["--apply"]);
+      const line = run.output.split("\n").find((l) => l.includes("HTTP 400")) ?? "";
+      expect(line.length).toBeLessThan(400);
+      expect(line.endsWith("…")).toBe(true);
+    });
+  });
+
+  describe("--resume", () => {
+    async function partialSeedAtCanary() {
+      await start({ failPost: { nth: 3 + 1 + 3 + 1, status: 400, body: "rejected", raw: true } });
+      expect((await runSeed(["--apply"])).code).toBe(1);
+      return server.postCount;
+    }
+
+    it("previews read-only, then completes the partial seed without a new customer or duplicates", async () => {
+      const postsBefore = await partialSeedAtCanary();
+
+      const preview = await runSeed(["--resume"]);
+      expect(preview.code).toBe(0);
+      expect(preview.output).toContain("deposits           0/9 present, 9 to post");
+      expect(preview.output).toContain("Resume preview: nothing was written");
+      expect(server.postCount).toBe(postsBefore);
+      expectCleanOutput(preview);
+
+      const resumed = await runSeed(["--apply", "--resume"]);
+      expect(resumed.code, resumed.output.split("\n").filter((l) => l.startsWith("✗")).join("\n")).toBe(0);
+      expectCleanOutput(resumed);
+      expectOnlyKeyedGetsAndPosts();
+      expect(server.customers).toHaveLength(1);
+      expect(server.accounts).toHaveLength(3);
+      expect(server.merchants).toHaveLength(3);
+      expect(server.records.deposits).toHaveLength(9);
+      expect(server.records.purchases).toHaveLength(24);
+      expect(server.records.loans).toHaveLength(1);
+      const manifest = readManifest();
+      expect(manifest).toMatchObject({ complete: true, readBackMatches: true, canary: { ok: true } });
+      expect(manifest.lastError).toBeUndefined();
+
+      const { status, body } = await pipeline(manifest.customerId, 400);
+      expect(status).toBe(200);
+      expect(body.affordability).toMatchObject({ maxSustainablePayment: 400, recommendedPayment: 350, existingDebtPayments: 180 });
+    });
+
+    it("skips records an interrupted run already wrote", async () => {
+      let kill: () => void = () => {};
+      await start({ onPost: (n) => n === 30 && kill() });
+      expect((await runSeed(["--apply"], { onSpawn: (k) => (kill = k) })).code).toBe(130);
+      const already = server.records.deposits.length + server.records.withdrawals.length + server.records.bills.length + server.records.purchases.length;
+
+      const resumed = await runSeed(["--apply", "--resume"]);
+      expect(resumed.code).toBe(0);
+      expect(resumed.output).toContain("already present");
+      expect(server.records.deposits).toHaveLength(9);
+      expect(server.records.withdrawals).toHaveLength(3);
+      expect(server.records.bills).toHaveLength(5);
+      expect(server.records.purchases).toHaveLength(24);
+      expect(server.records.loans).toHaveLength(1);
+      expect(server.postCount).toBe(FULL_SEED_POSTS);
+      expect(already).toBeGreaterThan(0);
+    });
+
+    it("refuses when the manifest is complete, missing, or for another persona", async () => {
+      await start();
+      expect((await runSeed(["--resume"])).code, "no manifest").toBe(2);
+      expect((await runSeed(["--apply"])).code).toBe(0);
+      const done = await runSeed(["--apply", "--resume"]);
+      expect(done.code, "complete manifest").toBe(2);
+      expect(done.output).toContain("already records a complete seed");
+      const other = await runSeed(["--resume", "--persona", "sg-demo-other"]);
+      expect(other.code, "other persona").toBe(2);
+    });
+
+    it("refuses when the manifest's customer isn't visible with this key", async () => {
+      await partialSeedAtCanary();
+      const manifest = readManifest();
+      await server.close();
+      await start(); // a fresh sandbox: the manifest's ids don't exist here
+      const run = await runSeed(["--apply", "--resume"]);
+      expect(run.code).toBe(2);
+      expect(run.output).toContain("not visible with this key");
+      expect(server.postCount).toBe(0);
+      expectNoLeaks(run.output, [manifest.customerId, ...Object.values(manifest.accountIds as Record<string, string>)]);
+    });
+
+    it("refuses when the partial seed already holds a duplicate record", async () => {
+      await partialSeedAtCanary();
+      const { accountIds } = readManifest();
+      const body = buildSeedDataset({ asOf: readManifest().asOf }).deposits[1].body;
+      for (const id of ["5f00000000000000000000aa", "5f00000000000000000000ab"]) {
+        server.records.deposits.push({ ...body, _id: id, account_id: accountIds.checking, status: "pending" });
+      }
+      const posts = server.postCount;
+      const run = await runSeed(["--apply", "--resume"]);
+      expect(run.code).toBe(2);
+      expect(run.output).toContain("duplicate");
+      expect(server.postCount).toBe(posts);
+    });
+
+    it("--canary-only posts exactly the canary, verifies it, and leaves the seed resumable", async () => {
+      const postsBefore = await partialSeedAtCanary();
+      const canaryRun = await runSeed(["--apply", "--resume", "--canary-only"]);
+      expect(canaryRun.code, canaryRun.output.split("\n").filter((l) => l.startsWith("✗")).join("\n")).toBe(0);
+      expect(canaryRun.output).toContain("Canary deposit stored and verified");
+      expectCleanOutput(canaryRun);
+      expect(server.postCount - postsBefore, "exactly one POST").toBe(1);
+      const { asOf } = readManifest();
+      expect(server.records.deposits.map((d) => d.description)).toEqual([buildSeedDataset({ asOf }).deposits[0].body.description]);
+      expect(readManifest()).toMatchObject({ complete: false, canary: { ok: true } });
+      expect(readManifest().lastError).toBeUndefined();
+
+      const again = await runSeed(["--apply", "--resume", "--canary-only"]);
+      expect(again.code).toBe(0);
+      expect(again.output).toContain("canary deposit already present");
+      expect(server.postCount - postsBefore, "a second canary-only run posts nothing").toBe(1);
+
+      const resumed = await runSeed(["--apply", "--resume"]);
+      expect(resumed.code).toBe(0);
+      expect(server.records.deposits).toHaveLength(9);
+      expect(readManifest()).toMatchObject({ complete: true, readBackMatches: true });
+    });
+
+    it("--canary-only stops at a failing canary with exactly one POST", async () => {
+      // Replays the incident (canary rejected), then a resume where the sandbox rewrites dates.
+      await start({ failPost: { nth: 3 + 1 + 3 + 1, status: 400, body: "rejected", raw: true }, rewriteDates: true });
+      expect((await runSeed(["--apply"])).code).toBe(1);
+      const postsBefore = server.postCount;
+
+      const run = await runSeed(["--apply", "--resume", "--canary-only"]);
+      expect(run.code).toBe(3);
+      expect(run.output).toContain("Canary failed");
+      expect(server.postCount - postsBefore).toBe(1);
+      expect(readManifest()).toMatchObject({ complete: false, canary: { ok: false, changed: ["transaction_date"] } });
+    });
+
+    it("rejects --canary-only without --resume", async () => {
+      await start();
+      expect((await runSeed(["--apply", "--canary-only"])).code).toBe(64);
+      expect(server.postCount).toBe(0);
+    });
+
+    it("rejects --allow-duplicate with --resume", async () => {
+      await start();
+      expect((await runSeed(["--resume", "--allow-duplicate"])).code).toBe(64);
+    });
+  });
 });

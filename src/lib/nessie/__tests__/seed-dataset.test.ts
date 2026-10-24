@@ -138,6 +138,11 @@ describe("seed dataset shape", () => {
     expect(shift(dataset.deposits[0].body.transaction_date)).toBe(7);
   });
 
+  it("keeps every payload ASCII-only (the sandbox 400s on non-ASCII)", () => {
+    const text = JSON.stringify(dataset);
+    expect(/[^\x00-\x7f]/.test(text)).toBe(false);
+  });
+
   it("contains no key- or id-shaped strings", () => {
     const text = JSON.stringify(dataset);
     const keyOrIdShaped = /\b[0-9a-f]{24,32}\b|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;

@@ -16,8 +16,8 @@ export interface MockNessieOptions {
   loansNotFound?: boolean;
   /** Store transaction/purchase/payment dates as "today", like a sandbox ignoring back-dates. */
   rewriteDates?: boolean;
-  /** Fail the Nth POST (1-based) with this HTTP status and body. */
-  failPost?: { nth: number; status: number; body: unknown };
+  /** Fail the Nth POST (1-based) with this HTTP status and body (`raw: true` sends it as plain text). */
+  failPost?: { nth: number; status: number; body: unknown; raw?: boolean };
   /** Drop the connection on the Nth POST (1-based) without responding. */
   dropPost?: number;
   /** Called after each POST is stored, with the running count. */
@@ -112,6 +112,10 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
     }
     if (options.failPost?.nth === nth) {
       state.postCount = nth;
+      if (options.failPost.raw) {
+        res.writeHead(options.failPost.status, { "content-type": "text/plain" });
+        return res.end(String(options.failPost.body));
+      }
       return send(res, options.failPost.status, options.failPost.body);
     }
 

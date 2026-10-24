@@ -5,6 +5,9 @@
 //   npm run nessie:seed                      dry run — no network, prints the plan
 //   npm run nessie:seed -- --preflight       read-only GETs: duplicate + merchant checks
 //   npm run nessie:seed -- --apply           creates a NEW customer and its data
+//   npm run nessie:seed -- --resume          read-only: what a resume of the manifest's partial seed would post
+//   npm run nessie:seed -- --apply --resume  posts only the records that partial seed is missing
+//   ... --apply --resume --canary-only       posts at most the single canary deposit, verifies it, stops
 //
 // Safety: POSTs are impossible without --apply, there is no PUT/PATCH/DELETE
 // (and never DELETE /data), POSTs are never retried, and the key, customer id,
@@ -24,6 +27,9 @@ const TIMEOUT_MS = 10000;
 
 const EXIT = { ok: 0, failed: 1, refused: 2, canary: 3, usage: 64, interrupted: 130 };
 
+/** Ends a --canary-only run after the canary, leaving the manifest incomplete. */
+class CanaryOnlyDone extends Error {}
+
 class SeedError extends Error {
   constructor(message, exitCode = EXIT.failed) {
     super(message);
@@ -33,14 +39,16 @@ class SeedError extends Error {
 
 // ---------- args ----------
 
-const USAGE = `Usage: npm run nessie:seed -- [--preflight | --apply] [--persona <id>] [--as-of YYYY-MM-DD] [--allow-duplicate]`;
+const USAGE = `Usage: npm run nessie:seed -- [--preflight | --apply] [--resume [--canary-only]] [--persona <id>] [--as-of YYYY-MM-DD] [--allow-duplicate]`;
 
 function parseArgs(argv) {
-  const opts = { mode: "dry-run", persona: DEFAULT_PERSONA, asOf: null, allowDuplicate: false };
+  const opts = { mode: "dry-run", persona: DEFAULT_PERSONA, asOf: null, allowDuplicate: false, resume: false, canaryOnly: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--preflight") opts.mode = opts.mode === "apply" ? "apply" : "preflight";
     else if (arg === "--apply") opts.mode = "apply";
+    else if (arg === "--resume") opts.resume = true;
+    else if (arg === "--canary-only") opts.canaryOnly = true;
     else if (arg === "--allow-duplicate") opts.allowDuplicate = true;
     else if (arg === "--persona") opts.persona = argv[++i];
     else if (arg === "--as-of") opts.asOf = argv[++i];
@@ -55,6 +63,10 @@ function parseArgs(argv) {
   if (opts.asOf && !/^\d{4}-\d{2}-\d{2}$/.test(opts.asOf)) throw new SeedError("--as-of must be YYYY-MM-DD.", EXIT.usage);
   if (opts.asOf && opts.mode === "apply") {
     throw new SeedError("--as-of is for dry runs only; --apply always seeds relative to today.", EXIT.usage);
+  }
+  if (opts.canaryOnly && !opts.resume) throw new SeedError("--canary-only works with --resume.", EXIT.usage);
+  if (opts.resume && (opts.allowDuplicate || opts.asOf)) {
+    throw new SeedError("--resume continues the manifest's own seed; it takes neither --allow-duplicate nor --as-of.", EXIT.usage);
   }
   return opts;
 }
@@ -75,6 +87,28 @@ const describeEndpoint = (method, path) =>
   `${method} ${path.replace(/\/(customers|accounts|merchants)\/[^/]+/g, "/$1/:id")}`;
 
 // ---------- http ----------
+
+const MAX_BODY_CHARS = 300;
+const clip = (text) => (text.length > MAX_BODY_CHARS ? `${text.slice(0, MAX_BODY_CHARS)}…` : text);
+
+/**
+ * "HTTP 400 — <message> [<culprit>]", falling back to the scrubbed raw body
+ * when Nessie answers without a `message` (plain text, a bare string, or an
+ * unexpected JSON shape). Always scrubbed and clipped.
+ */
+function describeFailure(res) {
+  const parts = [`HTTP ${res.status}`];
+  const json = res.json;
+  const hasMessage = json && typeof json === "object" && typeof json.message === "string" && json.message;
+  const hasCulprit = json && typeof json === "object" && Array.isArray(json.culprit) && json.culprit.length > 0;
+  if (hasMessage) parts.push(clip(scrub(json.message)));
+  if (hasCulprit) parts.push(`[${clip(json.culprit.map((c) => scrub(typeof c === "string" ? c : JSON.stringify(c))).join("; "))}]`);
+  if (!hasMessage && !hasCulprit) {
+    const raw = json !== null ? JSON.stringify(json) : (res.text ?? "").trim();
+    parts.push(raw ? `body ${clip(scrub(raw))}` : "empty body");
+  }
+  return parts.join(" — ");
+}
 
 function createClient({ baseUrl, apiKey, allowWrites }) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -103,7 +137,7 @@ function createClient({ baseUrl, apiKey, allowWrites }) {
     } catch {
       // keep json null; reported below if it matters
     }
-    return { status: response.status, ok: response.ok, json, endpoint };
+    return { status: response.status, ok: response.ok, json, text, endpoint };
   }
 
   return {
@@ -117,11 +151,7 @@ function createClient({ baseUrl, apiKey, allowWrites }) {
       await sleep(POST_GAP_MS);
       const res = await send("POST", path, body);
       const created = res.json?.objectCreated;
-      if (res.status !== 201 || !created?._id) {
-        const message = res.json?.message ? ` — ${scrub(res.json.message)}` : "";
-        const culprit = Array.isArray(res.json?.culprit) ? ` [${res.json.culprit.map(scrub).join("; ")}]` : "";
-        throw new SeedError(`${res.endpoint}: HTTP ${res.status}${message}${culprit}`);
-      }
+      if (res.status !== 201 || !created?._id) throw new SeedError(`${res.endpoint}: ${describeFailure(res)}`);
       return created;
     },
   };
@@ -250,12 +280,54 @@ async function apply(client, dataset, pre, manifest, save) {
     manifest.accountIds[a.key] = (await client.post(`/customers/${manifest.customerId}/accounts`, a.body))._id;
     save();
   }
+  await seedTransactions(client, dataset, manifest, save, emptyExisting());
+}
+
+// Stream label → [resource path, field that uniquely labels each seeded record].
+const STREAMS = {
+  deposits: ["deposits", "description"],
+  withdrawals: ["withdrawals", "description"],
+  bills: ["bills", "nickname"],
+  purchases: ["purchases", "description"],
+  loans: ["loans", "description"],
+};
+const emptyExisting = () => Object.fromEntries(Object.keys(STREAMS).map((label) => [label, new Map()]));
+
+/** Counts the seeded records already on checking, keyed by their unique label. */
+async function existingRecords(client, manifest) {
+  const existing = emptyExisting();
+  for (const [label, [resource, keyField]] of Object.entries(STREAMS)) {
+    const live = (await client.get(`/accounts/${manifest.accountIds.checking}/${resource}`)) ?? [];
+    if (!Array.isArray(live)) throw new SeedError(`GET /accounts/:id/${resource}: expected an array`);
+    for (const record of live) {
+      const key = record?.[keyField];
+      if (typeof key === "string") existing[label].set(key, (existing[label].get(key) ?? 0) + 1);
+    }
+  }
+  return existing;
+}
+
+/**
+ * Posts every dataset record not already in `existing`, canary first. Shared
+ * by --apply (nothing exists yet) and --apply --resume (skip what a partial
+ * seed already wrote), so a resume can never double-post a record.
+ */
+async function seedTransactions(client, dataset, manifest, save, existing, { canaryOnly = false } = {}) {
+  const step = (label) => console.log(`  … ${label}`);
   const accountPath = (key) => `/accounts/${manifest.accountIds[key]}`;
+  const has = (label, record) => (existing[label].get(record.body[STREAMS[label][1]]) ?? 0) > 0;
+  const posted = (label) => (manifest.counts[label] = (manifest.counts[label] ?? 0) + 1);
 
   // Canary: prove Nessie keeps a back-dated record exactly before 40+ more writes.
   const [canary, ...restDeposits] = dataset.deposits;
-  step("canary deposit");
-  await client.post(`${accountPath(canary.account)}/deposits`, canary.body);
+  if (has("deposits", canary)) {
+    step("canary deposit already present — verifying");
+  } else {
+    step("canary deposit");
+    await client.post(`${accountPath(canary.account)}/deposits`, canary.body);
+    posted("deposits");
+    save();
+  }
   const stored = (await client.get(`${accountPath(canary.account)}/deposits`)) ?? [];
   const match = Array.isArray(stored) ? stored.find((d) => d?.description === canary.body.description) : null;
   const canaryFields = ["transaction_date", "amount", "description"];
@@ -266,27 +338,109 @@ async function apply(client, dataset, pre, manifest, save) {
     throw new SeedError(`Canary failed: Nessie changed ${changed.join(", ")} on a back-dated deposit. Stopping.`, EXIT.canary);
   }
   manifest.canary = { ok: true };
-  manifest.counts.deposits = 1;
+  existing.deposits.set(canary.body.description, 1);
+  if (canaryOnly) return;
 
-  const postAll = async (label, records, resource, build = (r) => r.body) => {
+  const postMissing = async (label, records, build = (r) => r.body) => {
+    let skipped = 0;
+    let sent = 0;
     for (const r of records) {
-      await client.post(`${accountPath(r.account)}/${resource}`, build(r));
-      manifest.counts[label] = (manifest.counts[label] ?? 0) + 1;
+      if (has(label, r)) {
+        skipped++;
+        continue;
+      }
+      await client.post(`${accountPath(r.account)}/${STREAMS[label][0]}`, build(r));
+      posted(label);
+      sent++;
     }
     save();
-    step(`${label} ${manifest.counts[label] ?? 0}`);
+    step(`${label} posted ${sent}${skipped ? `, already present ${skipped}` : ""}`);
   };
-  await postAll("deposits", restDeposits, "deposits");
-  await postAll("withdrawals", dataset.withdrawals, "withdrawals");
-  await postAll("bills", dataset.bills, "bills");
-  await postAll("purchases", dataset.purchases, "purchases", (r) => ({ merchant_id: manifest.merchantIds[r.merchant], ...r.body }));
-
+  await postMissing("deposits", restDeposits);
+  await postMissing("withdrawals", dataset.withdrawals);
+  await postMissing("bills", dataset.bills);
+  await postMissing("purchases", dataset.purchases, (r) => ({ merchant_id: manifest.merchantIds[r.merchant], ...r.body }));
   // Loans are a documented endpoint; a failed loan POST stops the run like any other,
   // because a persona missing its debt would overstate what it can afford.
-  await postAll("loans", dataset.loans, "loans");
+  await postMissing("loans", dataset.loans);
 
   manifest.readBack = await readBack(client, dataset, manifest);
   manifest.readBackMatches = manifest.readBack.mismatches.length === 0;
+}
+
+// ---------- resume ----------
+
+/**
+ * Verifies, read-only, that the manifest's partial seed is intact and ours:
+ * same persona, incomplete, customer/accounts/merchants all present under this
+ * key with the expected types, and no seeded record duplicated. Returns the
+ * dataset rebuilt for the manifest's asOf plus what already exists.
+ */
+async function loadResumeState(client, persona) {
+  const refuse = (message) => {
+    throw new SeedError(`Refusing to resume: ${message}`, EXIT.refused);
+  };
+  const manifest = readManifest();
+  if (!manifest) refuse(`no ${MANIFEST_PATH} to resume.`);
+  if (manifest.complete) refuse("the manifest already records a complete seed.");
+  if (manifest.persona !== persona) refuse(`the manifest is for persona "${manifest.persona}", not "${persona}".`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(manifest.asOf ?? "")) refuse("the manifest has no valid asOf date.");
+
+  const dataset = buildSeedDataset({ asOf: manifest.asOf, personaId: manifest.persona });
+  manifest.accountIds ??= {};
+  manifest.merchantIds ??= {};
+  manifest.counts ??= {};
+  const missing = [
+    !manifest.customerId && "customer",
+    ...dataset.accounts.filter((a) => !manifest.accountIds[a.key]).map((a) => `account ${a.key}`),
+    ...dataset.merchantsNeeded.filter((m) => !manifest.merchantIds[m.category]).map((m) => `merchant ${m.category}`),
+  ].filter(Boolean);
+  if (missing.length > 0) refuse(`the partial seed never created ${missing.join(", ")}; it can't be resumed in place.`);
+
+  const getOrRefuse = async (path, what) => {
+    try {
+      return await client.get(path);
+    } catch (err) {
+      if (err instanceof SeedError && / HTTP 404$/.test(err.message)) refuse(`${what} from the manifest is not visible with this key.`);
+      throw err;
+    }
+  };
+  await getOrRefuse(`/customers/${manifest.customerId}`, "the customer");
+  const accounts = await getOrRefuse(`/customers/${manifest.customerId}/accounts`, "the customer's accounts");
+  if (!Array.isArray(accounts)) refuse("the customer's accounts did not come back as a list.");
+  if (accounts.length !== dataset.accounts.length) refuse(`the customer has ${accounts.length} account(s), expected ${dataset.accounts.length}.`);
+  for (const a of dataset.accounts) {
+    const live = accounts.find((x) => x?._id === manifest.accountIds[a.key]);
+    if (!live) refuse(`account ${a.key} from the manifest is not on the customer.`);
+    if (live.type !== a.body.type) refuse(`account ${a.key} is type "${live.type}", expected "${a.body.type}".`);
+  }
+  const merchants = await client.get("/merchants");
+  const merchantIds = new Set(Array.isArray(merchants) ? merchants.map((m) => m?._id) : []);
+  for (const m of dataset.merchantsNeeded) {
+    if (!merchantIds.has(manifest.merchantIds[m.category])) refuse(`merchant ${m.category} from the manifest no longer exists.`);
+  }
+
+  const existing = await existingRecords(client, manifest);
+  const duplicates = Object.entries(existing).flatMap(([label, keys]) =>
+    [...keys].filter(([, count]) => count > 1).map(([key, count]) => `${label} "${key}" ×${count}`),
+  );
+  const unknown = Object.entries(existing).flatMap(([label, keys]) => {
+    const expected = new Set(dataset[label].map((r) => r.body[STREAMS[label][1]]));
+    return [...keys.keys()].filter((key) => !expected.has(key)).map((key) => `${label} "${key}"`);
+  });
+  return { manifest, dataset, existing, duplicates, unknown };
+}
+
+function reportResume(state) {
+  const lines = ["customer, 3 accounts, 3 merchants  verified"];
+  for (const label of Object.keys(STREAMS)) {
+    const total = state.dataset[label].length;
+    const present = state.dataset[label].filter((r) => state.existing[label].has(r.body[STREAMS[label][1]])).length;
+    lines.push(`${label.padEnd(18)} ${present}/${total} present, ${total - present} to post`);
+  }
+  if (state.duplicates.length) lines.push(`duplicates         ${state.duplicates.length}: ${state.duplicates.map(scrub).join("; ")}`);
+  if (state.unknown.length) lines.push(`unrecognised       ${state.unknown.length}: ${state.unknown.map(scrub).join("; ")}`);
+  console.log(lines.join("\n"));
 }
 
 /** GETs everything back and compares to the dataset; reports field names only. */
@@ -325,8 +479,81 @@ function writeManifest(manifest) {
 
 // ---------- main ----------
 
+function guardedRun(manifest, run) {
+  // Write-ahead: persist ids as soon as they exist, so an interrupted run
+  // still records what it created. Nothing is written before the first POST succeeds.
+  const save = () => {
+    if (manifest.customerId || Object.values(manifest.merchantIds).some(Boolean)) writeManifest(manifest);
+  };
+  const interrupt = (signal) => {
+    save();
+    console.error(`\n✗ Interrupted by ${signal}; partial seed recorded in ${MANIFEST_PATH} (complete: false).`);
+    process.exit(EXIT.interrupted);
+  };
+  process.once("SIGINT", interrupt);
+  process.once("SIGTERM", interrupt);
+  return (async () => {
+    try {
+      await run(save);
+      manifest.complete = true;
+      delete manifest.lastError;
+    } catch (err) {
+      if (err instanceof CanaryOnlyDone) delete manifest.lastError;
+      else manifest.lastError = scrub(err?.message ?? err);
+      throw err;
+    } finally {
+      save();
+    }
+  })();
+}
+
+function reportResult(manifest, verb) {
+  console.log(
+    [
+      "",
+      `${verb} (ids in ${MANIFEST_PATH})`,
+      `posted             ${JSON.stringify(manifest.counts)}`,
+      `read-back          ${manifest.readBackMatches ? "matches the dataset" : `${manifest.readBack.mismatches.length} mismatch(es):`}`,
+      ...(manifest.readBackMatches ? [] : manifest.readBack.mismatches.map((m) => `  - ${scrub(m)}`)),
+      `next               set NESSIE_CUSTOMER_ID in .env.local to the manifest's customerId, then restart npm run dev`,
+    ].join("\n"),
+  );
+  if (!manifest.readBackMatches) process.exitCode = EXIT.failed;
+}
+
+async function resumeMain(opts) {
+  console.log(`Nessie seed — resume ${opts.mode === "apply" ? "(apply)" : "(preview, GET only)"}\n`);
+  const client = createClient({ ...loadNessieEnv(), allowWrites: opts.mode === "apply" });
+  const state = await loadResumeState(client, opts.persona);
+  console.log(`persona            ${state.dataset.persona}  (asOf ${state.dataset.asOf}, from the manifest)`);
+  reportResume(state);
+  if (state.duplicates.length || state.unknown.length) {
+    throw new SeedError("Refusing to resume: the partial seed holds duplicate or unrecognised records.", EXIT.refused);
+  }
+  if (opts.mode !== "apply") {
+    console.log("\nResume preview: nothing was written. Next: --apply --resume (writes).");
+    return;
+  }
+  const { manifest } = state;
+  if (opts.canaryOnly) {
+    console.log("\nCanary only (at most one POST):");
+    await guardedRun(manifest, async (save) => {
+      await seedTransactions(client, state.dataset, manifest, save, state.existing, { canaryOnly: true });
+      throw new CanaryOnlyDone();
+    }).catch((err) => {
+      if (!(err instanceof CanaryOnlyDone)) throw err;
+    });
+    console.log("\nCanary deposit stored and verified (date, amount, description). Seed still incomplete; next: --apply --resume.");
+    return;
+  }
+  console.log("\nResuming:");
+  await guardedRun(manifest, (save) => seedTransactions(client, state.dataset, manifest, save, state.existing));
+  reportResult(manifest, "seed resumed and completed");
+}
+
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.resume) return resumeMain(opts);
   const asOf = opts.asOf ?? new Date().toISOString().slice(0, 10);
   const dataset = buildSeedDataset({ asOf, personaId: opts.persona });
 
@@ -356,37 +583,9 @@ async function main() {
     pre.manifestComplete = false;
   }
   const manifest = { persona: dataset.persona, asOf, customerId: null, accountIds: {}, merchantIds: {}, counts: {}, complete: false };
-  // Write-ahead: persist ids as soon as they exist, so an interrupted run
-  // still records what it created. Nothing is written before the first POST succeeds.
-  const save = () => {
-    if (manifest.customerId || Object.values(manifest.merchantIds).some(Boolean)) writeManifest(manifest);
-  };
-  const interrupt = (signal) => {
-    save();
-    console.error(`\n✗ Interrupted by ${signal}; partial seed recorded in ${MANIFEST_PATH} (complete: false).`);
-    process.exit(EXIT.interrupted);
-  };
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", interrupt);
-
   console.log("\nApplying:");
-  try {
-    await apply(client, dataset, pre, manifest, save);
-    manifest.complete = true;
-  } finally {
-    save();
-  }
-  console.log(
-    [
-      "",
-      `customer created (id saved to ${MANIFEST_PATH})`,
-      `counts             ${JSON.stringify(manifest.counts)}`,
-      `read-back          ${manifest.readBackMatches ? "matches the dataset" : `${manifest.readBack.mismatches.length} mismatch(es):`}`,
-      ...(manifest.readBackMatches ? [] : manifest.readBack.mismatches.map((m) => `  - ${scrub(m)}`)),
-      `next               set NESSIE_CUSTOMER_ID in .env.local to the manifest's customerId, then restart npm run dev`,
-    ].join("\n"),
-  );
-  if (!manifest.readBackMatches) process.exitCode = EXIT.failed;
+  await guardedRun(manifest, (save) => apply(client, dataset, pre, manifest, save));
+  reportResult(manifest, "customer created");
 }
 
 main().catch((err) => {

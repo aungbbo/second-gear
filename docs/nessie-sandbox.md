@@ -10,6 +10,18 @@ npm run nessie:seed -- --preflight     # 2. read-only: duplicate-persona and mer
 npm run nessie:seed -- --apply         # 3. writes: creates a NEW customer and its data
 ```
 
+If an apply stops partway, the manifest keeps `complete: false` and the ids it created. Don't start over; resume in place:
+
+```bash
+npm run nessie:seed -- --resume                          # read-only: verifies the partial seed, shows what's missing
+npm run nessie:seed -- --apply --resume --canary-only    # at most ONE POST: the canary deposit, then verify and stop
+npm run nessie:seed -- --apply --resume                  # posts only the missing records
+```
+
+Resume never creates a customer, account or merchant. It refuses when the manifest is complete or belongs to another persona, when its customer or accounts aren't visible with this key, or when the partial seed holds duplicate or unrecognised records. Records are matched by their `sg-seed:` label, so nothing is posted twice.
+
+Every payload is ASCII-only. The real sandbox answered the first non-ASCII payload (an em dash in a deposit description) with a bare HTTP 400. Failed POSTs now print Nessie's scrubbed, clipped response body and record it as `lastError` in the manifest.
+
 After `--apply`:
 
 1. Copy `customerId` from `.nessie-seed.local.json` into `.env.local` as `NESSIE_CUSTOMER_ID`, and set `NESSIE_MODE=live`.
