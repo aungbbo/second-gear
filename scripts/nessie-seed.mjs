@@ -330,10 +330,10 @@ async function seedTransactions(client, dataset, manifest, save, existing, { can
   }
   const stored = (await client.get(`${accountPath(canary.account)}/deposits`)) ?? [];
   const match = Array.isArray(stored) ? stored.find((d) => d?.description === canary.body.description) : null;
-  const canaryFields = ["transaction_date", "amount", "description"];
-  if (!match || !sameRecord(match, canary.body, canaryFields) || !notCancelled(match)) {
+  // status is required by the live sandbox, so it must round-trip exactly too.
+  const canaryFields = ["transaction_date", "amount", "description", "status"];
+  if (!match || !sameRecord(match, canary.body, canaryFields)) {
     const changed = match ? canaryFields.filter((f) => match[f] !== canary.body[f]) : ["<record not found>"];
-    if (match && !notCancelled(match)) changed.push("status");
     manifest.canary = { ok: false, changed };
     throw new SeedError(`Canary failed: Nessie changed ${changed.join(", ")} on a back-dated deposit. Stopping.`, EXIT.canary);
   }
@@ -446,10 +446,10 @@ function reportResume(state) {
 /** GETs everything back and compares to the dataset; reports field names only. */
 async function readBack(client, dataset, manifest) {
   const checks = [
-    ["deposits", "deposits", "description", ["transaction_date", "amount", "description"]],
-    ["withdrawals", "withdrawals", "description", ["transaction_date", "amount", "description"]],
+    ["deposits", "deposits", "description", ["transaction_date", "amount", "description", "status"]],
+    ["withdrawals", "withdrawals", "description", ["transaction_date", "amount", "description", "status"]],
     ["bills", "bills", "nickname", ["payment_amount", "nickname", "status", "payment_date", "recurring_date"]],
-    ["purchases", "purchases", "description", ["purchase_date", "amount", "description"]],
+    ["purchases", "purchases", "description", ["purchase_date", "amount", "description", "status"]],
     ["loans", "loans", "description", ["monthly_payment", "status", "type", "amount", "credit_score", "description"]],
   ];
   const mismatches = [];

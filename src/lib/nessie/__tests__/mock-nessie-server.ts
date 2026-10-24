@@ -20,6 +20,8 @@ export interface MockNessieOptions {
   failPost?: { nth: number; status: number; body: unknown; raw?: boolean };
   /** Drop the connection on the Nth POST (1-based) without responding. */
   dropPost?: number;
+  /** Store every transaction's status as this value, like a sandbox that rewrites it. */
+  rewriteStatus?: string;
   /** Called after each POST is stored, with the running count. */
   onPost?: (count: number) => void;
 }
@@ -39,6 +41,27 @@ export interface MockNessie {
 
 const RESOURCES = ["deposits", "withdrawals", "purchases", "bills", "loans"] as const;
 const DATE_FIELDS = ["transaction_date", "purchase_date", "payment_date"];
+
+/** Status values each create accepts. Deposits must send one, as the live sandbox demands. */
+const STATUS_RULES: Record<string, { required: boolean; allowed: string[]; schema: string }> = {
+  deposits: { required: true, allowed: ["pending", "cancelled", "completed", "executed"], schema: "DepositCreate" },
+  withdrawals: { required: false, allowed: ["pending", "cancelled", "completed", "executed"], schema: "WithdrawalCreate" },
+  purchases: { required: false, allowed: ["pending", "cancelled", "completed", "executed", "recurring"], schema: "PurchaseCreate" },
+  bills: { required: true, allowed: ["pending", "cancelled", "completed", "recurring"], schema: "BillCreate" },
+};
+
+/** Mirrors the sandbox's validation reply: a 400 whose JSON body is a bare string. */
+function statusError(resource: string, body: Record<string, unknown>): string | null {
+  const rule = STATUS_RULES[resource];
+  if (!rule) return null;
+  if (!("status" in body)) {
+    return rule.required ? `1 validation error for ${rule.schema}\nstatus\n  field required (type=value_error.missing)` : null;
+  }
+  if (typeof body.status !== "string" || !rule.allowed.includes(body.status)) {
+    return `1 validation error for ${rule.schema}\nstatus\n  value is not a valid enumeration member; permitted: ${rule.allowed.map((v) => `'${v}'`).join(", ")} (type=type_error.enum)`;
+  }
+  return null;
+}
 
 export async function startMockNessie(options: MockNessieOptions = {}): Promise<MockNessie> {
   let counter = 0;
@@ -134,7 +157,13 @@ export async function startMockNessie(options: MockNessieOptions = {}): Promise<
     } else if (parts[0] === "accounts" && RESOURCES.includes(parts[2] as (typeof RESOURCES)[number])) {
       if (parts[2] === "loans" && options.loansNotFound) return send(res, 404, { code: 404, message: "Not found" });
       if (!state.accounts.some((a) => a._id === parts[1])) return send(res, 404, { code: 404, message: "Invalid account id" });
+      const invalid = statusError(parts[2], body);
+      if (invalid) {
+        state.postCount = nth;
+        return send(res, 400, invalid);
+      }
       const record: Doc & { account_id: string } = { status: "pending", ...body, _id: mintId(), account_id: parts[1] };
+      if (options.rewriteStatus && parts[2] !== "loans") record.status = options.rewriteStatus;
       if (options.rewriteDates) {
         for (const field of DATE_FIELDS) if (field in record) record[field] = new Date().toISOString().slice(0, 10);
       }

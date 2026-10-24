@@ -5,6 +5,14 @@
 // imported by the app.
 
 export const SEED_MARKER = "sg-seed:";
+
+/**
+ * The live sandbox requires `status` on transaction creates (it answered a
+ * deposit without one with "1 validation error for DepositCreate / status /
+ * field required"), even though the SDKs mark it optional. "completed" is
+ * valid for deposits, withdrawals, and purchases alike.
+ */
+export const TRANSACTION_STATUS = "completed";
 export const DEFAULT_PERSONA = "sg-demo-subprime-01";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -66,17 +74,17 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
   const deposits = [
     ...[3, 17, 33, 47, 63, 77].map((d) => ({
       account: /** @type {AccountKey} */ ("checking"),
-      body: { medium: "balance", transaction_date: day(d), amount: 1650, description: tag(`Payroll - Acme Logistics (${day(d)})`) },
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 1650, description: tag(`Payroll - Acme Logistics (${day(d)})`) },
     })),
     ...[10, 40, 70].map((d) => ({
       account: /** @type {AccountKey} */ ("checking"),
-      body: { medium: "balance", transaction_date: day(d), amount: 150, description: tag(`Rideshare payout (${day(d)})`) },
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 150, description: tag(`Rideshare payout (${day(d)})`) },
     })),
   ];
 
   const withdrawals = [8, 38, 68].map((d) => ({
     account: /** @type {AccountKey} */ ("checking"),
-    body: { medium: "balance", transaction_date: day(d), amount: 120, description: tag(`ATM cash (${day(d)})`) },
+    body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 120, description: tag(`ATM cash (${day(d)})`) },
   }));
 
   const electric = /** @type {const} */ ([
@@ -111,6 +119,7 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA }) {
       merchant: /** @type {MerchantCategory} */ (stream.merchant),
       body: {
         medium: "balance",
+        status: TRANSACTION_STATUS,
         purchase_date: day(d),
         amount: stream.amounts[i],
         description: tag(`${stream.label} (${day(d)})`),

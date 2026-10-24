@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { analyzeSnapshotWithStats, parseNessieDate } from "@/lib/nessie/cashflow";
-import { buildSeedDataset, DEFAULT_PERSONA, isoDay, SEED_MARKER } from "../../../../scripts/nessie-seed/dataset.mjs";
+import {
+  buildSeedDataset,
+  DEFAULT_PERSONA,
+  isoDay,
+  SEED_MARKER,
+  TRANSACTION_STATUS,
+} from "../../../../scripts/nessie-seed/dataset.mjs";
 import { NEED, seedSnapshot } from "./fixtures";
 
 const AS_OF = "2026-10-24";
@@ -103,6 +109,13 @@ describe("seed dataset shape", () => {
       expect(["auto", "home", "small business"]).toContain(body.type);
       expect(["pending", "approved", "declined"]).toContain(body.status);
     }
+  });
+
+  it("sends the status the live sandbox requires on every transaction create", () => {
+    for (const { body } of [...dataset.deposits, ...dataset.withdrawals, ...dataset.purchases]) {
+      expect(body.status).toBe(TRANSACTION_STATUS);
+    }
+    expect(["pending", "cancelled", "completed", "executed"]).toContain(TRANSACTION_STATUS);
   });
 
   it("marks every record and ties the customer to the persona", () => {

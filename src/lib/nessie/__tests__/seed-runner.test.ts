@@ -451,4 +451,90 @@ describe("seed runner against a mock Nessie", () => {
       expect((await runSeed(["--resume", "--allow-duplicate"])).code).toBe(64);
     });
   });
+
+  describe("required transaction status", () => {
+    const postTo = async (path: string, body: object) => {
+      const res = await fetch(`${server.baseUrl}${path}?key=test`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+
+    async function mockWithAccount() {
+      await start();
+      const customer = await postTo("/customers", { first_name: "T", last_name: "T" });
+      const account = await postTo(`/customers/${customer.body.objectCreated._id}/accounts`, { type: "Checking", nickname: "c", rewards: 0, balance: 1 });
+      return `/accounts/${account.body.objectCreated._id}`;
+    }
+
+    it("the mock rejects a deposit without status exactly like the live sandbox", async () => {
+      const account = await mockWithAccount();
+      const missing = await postTo(`${account}/deposits`, { medium: "balance", transaction_date: "2026-10-21", amount: 1, description: "x" });
+      expect(missing.status).toBe(400);
+      expect(missing.body).toBe("1 validation error for DepositCreate\nstatus\n  field required (type=value_error.missing)");
+    });
+
+    it.each([
+      ["deposits", { medium: "balance", transaction_date: "2026-10-21", amount: 1, description: "x" }],
+      ["withdrawals", { medium: "balance", transaction_date: "2026-10-21", amount: 1, description: "x" }],
+      ["purchases", { medium: "balance", purchase_date: "2026-10-21", amount: 1, description: "x", merchant_id: "m" }],
+    ])("the mock rejects an invalid %s status and accepts \"completed\"", async (resource, body) => {
+      const account = await mockWithAccount();
+      const invalid = await postTo(`${account}/${resource}`, { ...body, status: "done" });
+      expect(invalid.status).toBe(400);
+      expect(invalid.body).toContain("value is not a valid enumeration member");
+      const valid = await postTo(`${account}/${resource}`, { ...body, status: "completed" });
+      expect(valid.status).toBe(201);
+    });
+
+    it("every transaction payload the runner would send carries status \"completed\"", async () => {
+      await start();
+      const dry = await runSeed([]);
+      const lines = dry.output.split("\n").filter((l) => / (deposit|withdrawal|purchase) +\{/.test(l));
+      expect(lines).toHaveLength(9 + 3 + 24);
+      for (const line of lines) expect(line).toContain('"status":"completed"');
+    });
+
+    it("the full seed passes the mock's status validation and read-back checks status", async () => {
+      await start();
+      const run = await runSeed(["--apply"]);
+      expect(run.code).toBe(0);
+      for (const resource of ["deposits", "withdrawals", "purchases"]) {
+        expect(server.records[resource].every((r) => r.status === "completed")).toBe(true);
+      }
+      expect(readManifest()).toMatchObject({ complete: true, readBackMatches: true });
+    });
+
+    it("stops at the canary when the sandbox stores a different status", async () => {
+      await start({ rewriteStatus: "executed" });
+      const run = await runSeed(["--apply"]);
+      expect(run.code).toBe(3);
+      expect(server.postCount).toBe(3 + 1 + 3 + 1);
+      expect(readManifest()).toMatchObject({ complete: false, canary: { ok: false, changed: ["status"] } });
+    });
+
+    it("resumes the real incident's partial seed: a 400 on a status-less canary, then a clean canary-only retry", async () => {
+      // Partial seed exactly as the sandbox left it: merchants, customer, accounts, no transactions.
+      await start({
+        failPost: {
+          nth: 3 + 1 + 3 + 1,
+          status: 400,
+          body: "1 validation error for DepositCreate\nstatus\n  field required (type=value_error.missing)",
+        },
+      });
+      const first = await runSeed(["--apply"]);
+      expect(first.code).toBe(1);
+      expect(first.output).toContain("DepositCreate");
+      const posts = server.postCount;
+
+      const retry = await runSeed(["--apply", "--resume", "--canary-only"]);
+      expect(retry.code).toBe(0);
+      expect(server.postCount - posts).toBe(1);
+      expect(server.records.deposits).toHaveLength(1);
+      expect(server.records.deposits[0]).toMatchObject({ status: "completed", amount: 1650 });
+      expect(readManifest()).toMatchObject({ complete: false, canary: { ok: true } });
+    });
+  });
 });

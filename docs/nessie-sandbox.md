@@ -20,7 +20,7 @@ npm run nessie:seed -- --apply --resume                  # posts only the missin
 
 Resume never creates a customer, account or merchant. It refuses when the manifest is complete or belongs to another persona, when its customer or accounts aren't visible with this key, or when the partial seed holds duplicate or unrecognised records. Records are matched by their `sg-seed:` label, so nothing is posted twice.
 
-Every payload is ASCII-only. The real sandbox answered the first non-ASCII payload (an em dash in a deposit description) with a bare HTTP 400. Failed POSTs now print Nessie's scrubbed, clipped response body and record it as `lastError` in the manifest.
+**`status` is required on transaction creates.** The SDKs mark it optional, but the live sandbox rejects a deposit without it: `HTTP 400 — "1 validation error for DepositCreate / status / field required"`. Deposits, withdrawals and purchases therefore send `status: "completed"`, and the canary and read-back check that it round-trips. Payloads are also kept ASCII-only. Failed POSTs print Nessie's scrubbed, clipped response body and record it as `lastError` in the manifest.
 
 After `--apply`:
 
