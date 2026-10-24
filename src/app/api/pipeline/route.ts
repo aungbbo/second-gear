@@ -9,6 +9,7 @@ import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-st
 import { assertLiveCrsRequest, LiveCrsAccessError } from "@/lib/crs/guard";
 import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
 import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
+import { ApifyError, type ApifyErrorKind } from "@/lib/apify/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
 import { assertRequestOrigin, getRequestIdentity, OriginConfigurationError } from "@/lib/request-identity";
 import { getSessionId } from "@/lib/session";
@@ -38,6 +39,22 @@ const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   frozen: 422,
   no_score: 422,
   not_soft_pull: 502,
+};
+
+// A live Apify Actor run can take up to APIFY_RUN_TIMEOUT_SECS (at most 300 s).
+export const maxDuration = 300;
+
+const APIFY_ERROR_STATUS: Record<ApifyErrorKind, number> = {
+  config: 503,
+  auth: 502,
+  not_found: 502,
+  quota: 503,
+  rate_limited: 503,
+  timeout: 504,
+  upstream: 502,
+  invalid_response: 502,
+  no_listings: 422,
+  budget: 429,
 };
 
 export async function POST(req: NextRequest) {
@@ -127,7 +144,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    const known = err instanceof NessieError || err instanceof CrsError;
+    const known =
+      err instanceof NessieError || err instanceof CrsError || err instanceof ApifyError;
     console.error("Pipeline failure", known ? `${err.name}[${err.kind}]: ${err.message}` : err);
     if (err instanceof NessieError) {
       return NextResponse.json({ error: err.userMessage }, { status: NESSIE_ERROR_STATUS[err.kind] });
@@ -135,6 +153,10 @@ export async function POST(req: NextRequest) {
     if (err instanceof CrsError) {
       const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
       return NextResponse.json({ error: err.userMessage }, { status: CRS_ERROR_STATUS[err.kind], headers });
+    }
+    if (err instanceof ApifyError) {
+      const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
+      return NextResponse.json({ error: err.userMessage }, { status: APIFY_ERROR_STATUS[err.kind], headers });
     }
     if (err instanceof LiveCrsAccessError) return NextResponse.json({ error: err.userMessage }, { status: 403 });
     if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {

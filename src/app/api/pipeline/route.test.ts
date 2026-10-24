@@ -35,11 +35,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-// The credit step now needs explicit mode and consent; these Nessie-focused tests use the CRS mock.
+// The credit and listings steps now need an explicit mode; these Nessie-focused
+// tests use the CRS and Apify mocks so only cash-flow behavior varies.
 beforeEach(() => {
   vi.stubEnv("CONSENT_STORE", "memory");
   vi.stubEnv("RATE_LIMIT_MODE", "memory");
   vi.stubEnv("CRS_MODE", "mock");
+  vi.stubEnv("APIFY_MODE", "mock");
   __resetRateLimitsForTests();
 });
 

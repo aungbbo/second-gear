@@ -94,6 +94,7 @@ async function pipeline(customerId: string, maxMonthlyPayment: number) {
   vi.stubEnv("NESSIE_CUSTOMER_ID", customerId);
   vi.stubEnv("NESSIE_BASE_URL", server.baseUrl);
   vi.stubEnv("CRS_MODE", "mock");
+  vi.stubEnv("APIFY_MODE", "mock");
   vi.spyOn(console, "warn").mockImplementation(() => {});
   const { consentToken } = issueConsentToken({ softPullAuthorized: true, textVersion: SOFT_PULL_CONSENT_VERSION });
   const response = await POST(

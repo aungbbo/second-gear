@@ -36,6 +36,9 @@ beforeEach(() => {
   vi.stubEnv("CONSENT_STORE", "memory");
   vi.stubEnv("RATE_LIMIT_MODE", "memory");
   vi.stubEnv("CRS_QUOTA_MODE", "memory");
+  // Listings aren't the focus of this file; mock them so every test that
+  // reaches step 3 doesn't need its own APIFY_MODE stub.
+  vi.stubEnv("APIFY_MODE", "mock");
   __resetCrsQuotaForTests();
   __resetRateLimitsForTests();
   __resetCrsAuthForTests();
