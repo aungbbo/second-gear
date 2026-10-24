@@ -4,6 +4,8 @@ import { pullSoftCredit } from "@/lib/providers/crs";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
 import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
+import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
+import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
 import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
 
@@ -17,13 +19,43 @@ const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
   insufficient_data: 422,
 };
 
+const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
+  config: 503,
+  auth: 502,
+  rate_limited: 503,
+  timeout: 502,
+  upstream: 502,
+  invalid_response: 502,
+  bureau_error: 502,
+  no_file: 422,
+  frozen: 422,
+  no_score: 422,
+  not_soft_pull: 502,
+};
+
+/** First hop of x-forwarded-for, kept server-side as part of the consent record. */
+function clientIp(req: NextRequest): string | undefined {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
+}
+
 export async function POST(req: NextRequest) {
   let need: BuyerNeed;
+  let consentToken: unknown;
   try {
     const body = await req.json();
     need = normalizeNeed(body?.need);
+    consentToken = body?.consentToken;
   } catch {
     return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  // Consent comes first: no provider runs without a fresh, server-issued, unused token.
+  let consent: VerifiedConsent;
+  try {
+    consent = consumeConsentToken(consentToken, { ipAddress: clientIp(req), userAgent: req.headers.get("user-agent") ?? undefined });
+  } catch (err) {
+    if (err instanceof ConsentError) return NextResponse.json({ error: err.userMessage }, { status: 400 });
+    throw err;
   }
 
   if (!need.description || need.maxMonthlyPayment <= 0) {
@@ -31,8 +63,8 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Step 1: consent + soft credit pull.
-    const credit = await pullSoftCredit(need);
+    // Step 1: soft credit pull, with the verified consent.
+    const credit = await pullSoftCredit(need, consent);
 
     // Step 2: affordability from cash flow.
     const affordability = await analyzeCashFlow(need, credit);
@@ -63,9 +95,14 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (err) {
-    console.error("Pipeline failure", err instanceof NessieError ? `${err.name}[${err.kind}]: ${err.message}` : err);
+    const known = err instanceof NessieError || err instanceof CrsError;
+    console.error("Pipeline failure", known ? `${err.name}[${err.kind}]: ${err.message}` : err);
     if (err instanceof NessieError) {
       return NextResponse.json({ error: err.userMessage }, { status: NESSIE_ERROR_STATUS[err.kind] });
+    }
+    if (err instanceof CrsError) {
+      const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
+      return NextResponse.json({ error: err.userMessage }, { status: CRS_ERROR_STATUS[err.kind], headers });
     }
     return NextResponse.json({ error: "The pipeline hit a snag. Try again." }, { status: 500 });
   }

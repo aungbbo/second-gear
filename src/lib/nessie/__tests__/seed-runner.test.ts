@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/pipeline/route";
+import { issueConsentToken, SOFT_PULL_CONSENT_VERSION } from "@/lib/consent";
 import { getAccountLoans, LOANS_UNAVAILABLE } from "@/lib/nessie/client";
 import type { PipelineResult } from "@/lib/types";
 import { buildSeedDataset } from "../../../../scripts/nessie-seed/dataset.mjs";
@@ -88,12 +89,14 @@ async function pipeline(customerId: string, maxMonthlyPayment: number) {
   vi.stubEnv("NESSIE_API_KEY", REAL_FORMAT_KEY);
   vi.stubEnv("NESSIE_CUSTOMER_ID", customerId);
   vi.stubEnv("NESSIE_BASE_URL", server.baseUrl);
+  vi.stubEnv("CRS_MODE", "mock");
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  const { consentToken } = issueConsentToken({ softPullAuthorized: true, textVersion: SOFT_PULL_CONSENT_VERSION });
   const response = await POST(
     new NextRequest("http://localhost/api/pipeline", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ need: { ...NEED, maxMonthlyPayment } }),
+      body: JSON.stringify({ need: { ...NEED, maxMonthlyPayment }, consentToken }),
     }),
   );
   return { status: response.status, body: (await response.json()) as PipelineResult };

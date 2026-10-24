@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/pipeline/route";
+import { issueConsentToken, SOFT_PULL_CONSENT_VERSION } from "@/lib/consent";
 import { analyzeSnapshot } from "@/lib/nessie/cashflow";
 import {
   API_KEY,
@@ -33,11 +34,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The credit step now needs explicit mode and consent; these Nessie-focused tests use the CRS mock.
+beforeEach(() => {
+  vi.stubEnv("CRS_MODE", "mock");
+});
+
 function pipelineRequest() {
+  const { consentToken } = issueConsentToken({ softPullAuthorized: true, textVersion: SOFT_PULL_CONSENT_VERSION });
   return new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ need: NEED }),
+    body: JSON.stringify({ need: NEED, consentToken }),
   });
 }
 

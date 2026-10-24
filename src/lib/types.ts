@@ -25,8 +25,10 @@ export interface CreditReport {
   tierLabel: string;
   scoreRangeLabel: string;
   factors: CreditFactor[];
+  /** Application-generated APR range for the score band — an estimate, not a lender offer or approval. */
   estimatedApr: { min: number; max: number };
-  hardInquiriesLast6mo: number;
+  /** Hard inquiries in the last 6 months, or null when the report can't tell hard from soft inquiries. */
+  hardInquiriesLast6mo: number | null;
   summary: string;
 }
 

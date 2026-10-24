@@ -43,3 +43,6 @@ next-env.d.ts
 
 # Nessie seed manifest (sandbox ids)
 /.nessie-seed*.local.json
+
+# MCP client config (may hold CRS credentials)
+.mcp.json
