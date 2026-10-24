@@ -1,7 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchNessieSnapshot, getAccountLoans, getCustomerAccounts, maskId, nessieGet } from "@/lib/nessie/client";
+import {
+  CUSTOMER_NOT_FOUND,
+  NO_ACCOUNTS,
+  UNREADABLE_ACCOUNTS,
+  describeEndpoint,
+  fetchNessieSnapshot,
+  getAccountLoans,
+  getCustomerAccounts,
+  nessieGet,
+} from "@/lib/nessie/client";
 import { NessieError } from "@/lib/nessie/errors";
-import { API_KEY, BASE_URL, CUSTOMER_ID, LIVE_CONFIG, baselineRoutes, stubNessieFetch } from "./fixtures";
+import {
+  API_KEY,
+  BASE_URL,
+  CUSTOMER_ID,
+  LIVE_CONFIG,
+  REAL_FORMAT_ACCOUNT_ID,
+  REAL_FORMAT_CUSTOMER_ID,
+  REAL_FORMAT_KEY,
+  SENSITIVE,
+  baselineRoutes,
+  expectNoLeaks,
+  stubNessieFetch,
+} from "./fixtures";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -32,9 +53,9 @@ describe("nessieGet", () => {
     const err = await catchError(nessieGet(LIVE_CONFIG, "/x"));
     expect(err.kind).toBe("auth");
     expect(err.status).toBe(401);
-    expect(err.message).not.toContain(API_KEY);
-    expect(err.message).toContain("key=***");
-    expect(err.userMessage).not.toContain(API_KEY);
+    expect(err.message).toContain("HTTP 401 from GET /x");
+    expectNoLeaks(err.message, [API_KEY, BASE_URL, "key="]);
+    expectNoLeaks(err.userMessage, [API_KEY, BASE_URL, "key="]);
   });
 
   it("retries once on a 5xx and then succeeds", async () => {
@@ -138,10 +159,9 @@ describe("fetchNessieSnapshot", () => {
     stubNessieFetch({});
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("not_found");
-    expect(err.userMessage).toBe("No accounts for this Nessie customer.");
+    expect(err.userMessage).toBe(CUSTOMER_NOT_FOUND);
     expect(err.message).toContain("NESSIE_CUSTOMER_ID");
-    expect(err.message).toContain(CUSTOMER_ID);
-    expect(err.message).not.toContain(API_KEY);
+    expectNoLeaks(err.message, SENSITIVE);
   });
 
   it("does not treat `200 []` from an unknown customer or bad key as a real empty customer", async () => {
@@ -149,10 +169,10 @@ describe("fetchNessieSnapshot", () => {
     const fetchMock = stubNessieFetch({ [`/customers/${CUSTOMER_ID}/accounts`]: [] });
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("not_found");
-    expect(err.userMessage).toBe("We couldn't find that bank customer.");
+    expect(err.userMessage).toBe(CUSTOMER_NOT_FOUND);
     expect(err.message).toContain("NESSIE_CUSTOMER_ID");
     expect(err.message).toContain("NESSIE_API_KEY");
-    expect(err.message).not.toContain(API_KEY);
+    expectNoLeaks(err.message, SENSITIVE);
     const paths = fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
     expect(paths).toEqual([`/customers/${CUSTOMER_ID}/accounts`, `/customers/${CUSTOMER_ID}`]);
   });
@@ -164,9 +184,9 @@ describe("fetchNessieSnapshot", () => {
     });
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("insufficient_data");
-    expect(err.userMessage).toBe("No accounts for this Nessie customer.");
-    expect(err.message).toContain(`customer ${CUSTOMER_ID} exists but has no accounts`);
-    expect(err.message).not.toContain(API_KEY);
+    expect(err.userMessage).toBe(NO_ACCOUNTS);
+    expect(err.message).toContain("the configured NESSIE_CUSTOMER_ID exists but has no accounts");
+    expectNoLeaks(err.message, SENSITIVE);
   });
 
   it("propagates an upstream failure while verifying an empty customer", async () => {
@@ -178,18 +198,135 @@ describe("fetchNessieSnapshot", () => {
     expect(err.kind).toBe("upstream");
   });
 
-  it("masks long customer ids in diagnostics", async () => {
-    const longId = "abcdef12-3456-4789-8abc-def012345678";
-    stubNessieFetch({ [`/customers/${longId}/accounts`]: [] });
-    const err = await catchError(fetchNessieSnapshot({ ...LIVE_CONFIG, customerId: longId }));
-    expect(err.message).toContain("customer abcdef12…");
-    expect(err.message).not.toContain(longId);
-    expect(maskId("short")).toBe("short");
+  it.each([401, 403])("maps %i during customer verification to auth", async (status) => {
+    stubNessieFetch({
+      [`/customers/${CUSTOMER_ID}/accounts`]: [],
+      [`/customers/${CUSTOMER_ID}`]: { status },
+    });
+    const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
+    expect(err.kind).toBe("auth");
+    expect(err.status).toBe(status);
+    expect(err.message).toContain(`HTTP ${status} from GET /customers/:id`);
+    expectNoLeaks(err.message, SENSITIVE);
+  });
+
+  it("reports accounts that exist but are unreadable as invalid_response", async () => {
+    const fetchMock = stubNessieFetch({
+      [`/customers/${CUSTOMER_ID}/accounts`]: [{ _id: "a1" }, { type: "Checking" }],
+      [`/customers/${CUSTOMER_ID}`]: { _id: CUSTOMER_ID },
+    });
+    const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
+    expect(err.kind).toBe("invalid_response");
+    expect(err.userMessage).toBe(UNREADABLE_ACCOUNTS);
+    expect(err.message).toContain("2 account record(s) failed validation from GET /customers/:id/accounts");
+    expectNoLeaks(err.message, SENSITIVE);
+    const paths = fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
+    expect(paths).toEqual([`/customers/${CUSTOMER_ID}/accounts`]);
+  });
+
+  it("proceeds with the readable accounts when only some are malformed", async () => {
+    const routes = baselineRoutes();
+    const accounts = routes[`/customers/${CUSTOMER_ID}/accounts`] as unknown[];
+    routes[`/customers/${CUSTOMER_ID}/accounts`] = [...accounts, { type: "Checking" }];
+    stubNessieFetch(routes);
+    const snapshot = await fetchNessieSnapshot(LIVE_CONFIG);
+    expect(snapshot.accounts).toHaveLength(3);
+    expect(snapshot.dropped).toBe(1);
   });
 
   it("fails the whole snapshot when a sub-resource fails", async () => {
     stubNessieFetch({ ...baselineRoutes(), "/accounts/sav/bills": { status: 401 } });
     const err = await catchError(fetchNessieSnapshot(LIVE_CONFIG));
     expect(err.kind).toBe("auth");
+  });
+});
+
+describe("diagnostics never carry ids, host, or key", () => {
+  const cfg = {
+    mode: "live" as const,
+    apiKey: REAL_FORMAT_KEY,
+    customerId: REAL_FORMAT_CUSTOMER_ID,
+    baseUrl: "https://api.nessieisreal.com",
+  };
+  const SECRETS = [REAL_FORMAT_KEY, REAL_FORMAT_CUSTOMER_ID, REAL_FORMAT_ACCOUNT_ID, cfg.baseUrl, "key="];
+  const accountsPath = `/customers/${REAL_FORMAT_CUSTOMER_ID}/accounts`;
+  const depositsPath = `/accounts/${REAL_FORMAT_ACCOUNT_ID}/deposits`;
+  const oneAccount = [{ _id: REAL_FORMAT_ACCOUNT_ID, type: "Checking", balance: 100 }];
+
+  /** Routes by pathname; a function value may return a Response or throw. */
+  function stubFetch(routes: Record<string, () => Response>) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const { pathname } = new URL(String(input));
+        const handler = routes[pathname];
+        return handler ? handler() : Response.json([], { status: 200 });
+      }),
+    );
+  }
+
+  const cases: [string, Record<string, () => Response>, string][] = [
+    ["accounts 401", { [accountsPath]: () => new Response("{}", { status: 401 }) }, "auth"],
+    ["accounts 404", { [accountsPath]: () => new Response("{}", { status: 404 }) }, "not_found"],
+    [
+      "empty accounts + customer 404",
+      { [`/customers/${REAL_FORMAT_CUSTOMER_ID}`]: () => new Response("{}", { status: 404 }) },
+      "not_found",
+    ],
+    [
+      "empty accounts + customer 200",
+      { [`/customers/${REAL_FORMAT_CUSTOMER_ID}`]: () => Response.json({ _id: REAL_FORMAT_CUSTOMER_ID }) },
+      "insufficient_data",
+    ],
+    [
+      "sub-resource 500 twice",
+      { [accountsPath]: () => Response.json(oneAccount), [depositsPath]: () => new Response("{}", { status: 500 }) },
+      "upstream",
+    ],
+    [
+      "sub-resource timeout",
+      {
+        [accountsPath]: () => Response.json(oneAccount),
+        [depositsPath]: () => {
+          throw new DOMException(`timed out fetching ${cfg.baseUrl}${depositsPath}?key=${REAL_FORMAT_KEY}`, "TimeoutError");
+        },
+      },
+      "timeout",
+    ],
+    [
+      "sub-resource network error",
+      {
+        [accountsPath]: () => Response.json(oneAccount),
+        [depositsPath]: () => {
+          throw new TypeError(`fetch failed for ${cfg.baseUrl}${depositsPath}?key=${REAL_FORMAT_KEY}`);
+        },
+      },
+      "upstream",
+    ],
+    [
+      "sub-resource non-JSON body",
+      { [accountsPath]: () => Response.json(oneAccount), [depositsPath]: () => new Response("<html>") },
+      "invalid_response",
+    ],
+  ];
+
+  it.each(cases)("%s", async (_label, routes, kind) => {
+    stubFetch(routes);
+    const err = await catchError(fetchNessieSnapshot(cfg));
+    expect(err.kind).toBe(kind);
+    expectNoLeaks(err.message, SECRETS);
+    expectNoLeaks(err.userMessage, SECRETS);
+    expectNoLeaks(String(err.stack), SECRETS);
+  });
+});
+
+describe("describeEndpoint", () => {
+  it.each([
+    ["/customers/abc/accounts", "GET /customers/:id/accounts"],
+    ["/accounts/x/deposits", "GET /accounts/:id/deposits"],
+    ["/customers/abc", "GET /customers/:id"],
+    ["/accounts/x/loans?key=secret", "GET /accounts/:id/loans"],
+  ])("%s → %s", (path, expected) => {
+    expect(describeEndpoint(path)).toBe(expected);
   });
 });

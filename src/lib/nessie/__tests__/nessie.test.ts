@@ -10,7 +10,7 @@ import { NessieError } from "@/lib/nessie/errors";
 import { mockCashFlow } from "@/lib/nessie/mock";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
 import type { CreditReport } from "@/lib/types";
-import { API_KEY, BASE_URL, CUSTOMER_ID, NEED, baselineRoutes, stubNessieFetch } from "./fixtures";
+import { API_KEY, BASE_URL, CUSTOMER_ID, NEED, baselineRoutes, expectNoLeaks, stubNessieFetch } from "./fixtures";
 
 const CREDIT = { score: 600 } as CreditReport;
 
@@ -99,11 +99,7 @@ describe("analyzeCashFlow dispatcher", () => {
       expect(result.avgMonthlyIncome).toBe(3000);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(warn.mock.calls[0][0]).toBe("[nessie] ignored records: malformed=0 invalidDates=0 duplicates=1");
-      const logged = JSON.stringify(warn.mock.calls);
-      expect(logged).not.toContain(API_KEY);
-      expect(logged).not.toContain("3000");
-      expect(logged).not.toContain("d1");
-      expect(logged).not.toContain(CUSTOMER_ID);
+      expectNoLeaks(JSON.stringify(warn.mock.calls), [API_KEY, CUSTOMER_ID, "3000", "d1"]);
     } finally {
       vi.useRealTimers();
       warn.mockRestore();

@@ -1,5 +1,5 @@
 import type { NessieConfig } from "@/lib/nessie/config";
-import { NessieError, redactKey } from "@/lib/nessie/errors";
+import { NessieError } from "@/lib/nessie/errors";
 import type {
   NessieAccount,
   NessieBill,
@@ -17,6 +17,14 @@ export const REQUEST_TIMEOUT_MS = 8000;
 export const RETRY_DELAY_MS = 300;
 
 const UNAVAILABLE = "Couldn't reach the bank data service. Try again in a minute.";
+export const CUSTOMER_NOT_FOUND = "We couldn't find that bank customer.";
+export const NO_ACCOUNTS = "No accounts for this Nessie customer.";
+export const UNREADABLE_ACCOUNTS = "The bank returned account data we couldn't read.";
+
+/** "GET /customers/:id/accounts" — the route shape, never the ids, host, or key. */
+export function describeEndpoint(path: string): string {
+  return `GET ${path.split("?")[0].replace(/\/(customers|accounts|merchants)\/[^/]+/g, "/$1/:id")}`;
+}
 
 /** Records missing an id or a finite amount field are dropped, not trusted. */
 interface ListResult<T> {
@@ -28,10 +36,10 @@ function hasNumber(record: Record<string, unknown>, field: string): boolean {
   return typeof record[field] === "number" && Number.isFinite(record[field]);
 }
 
-function validateList<T>(body: unknown, amountField: string, url: string): ListResult<T> {
+function validateList<T>(body: unknown, amountField: string, endpoint: string): ListResult<T> {
   if (!Array.isArray(body)) {
     throw new NessieError("invalid_response", UNAVAILABLE, {
-      detail: `expected an array from ${redactKey(url)}`,
+      detail: `expected an array from ${endpoint}`,
     });
   }
   const records: T[] = [];
@@ -47,15 +55,16 @@ function validateList<T>(body: unknown, amountField: string, url: string): ListR
   return { records, dropped };
 }
 
-async function requestOnce(url: string): Promise<Response> {
+async function requestOnce(url: string, endpoint: string): Promise<Response> {
   try {
     return await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (err) {
+    // The underlying error can echo the URL, so it is never attached or chained.
     const name = (err as { name?: string })?.name;
     if (name === "TimeoutError" || name === "AbortError") {
-      throw new NessieError("timeout", UNAVAILABLE, { detail: `timed out: ${redactKey(url)}` });
+      throw new NessieError("timeout", UNAVAILABLE, { detail: `timed out: ${endpoint}` });
     }
-    throw new NessieError("upstream", UNAVAILABLE, { detail: `network error: ${redactKey(url)}` });
+    throw new NessieError("upstream", UNAVAILABLE, { detail: `network error: ${endpoint}` });
   }
 }
 
@@ -65,46 +74,47 @@ async function requestOnce(url: string): Promise<Response> {
  */
 export async function nessieGet(cfg: LiveNessieConfig, path: string): Promise<unknown> {
   const url = `${cfg.baseUrl}${path}?key=${encodeURIComponent(cfg.apiKey)}`;
+  const endpoint = describeEndpoint(path);
 
   let response: Response;
   try {
-    response = await requestOnce(url);
+    response = await requestOnce(url, endpoint);
     if (response.status >= 500) throw new NessieError("upstream", UNAVAILABLE, { status: response.status });
   } catch (err) {
     if (!(err instanceof NessieError) || err.kind !== "upstream") throw err;
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-    response = await requestOnce(url);
+    response = await requestOnce(url, endpoint);
   }
 
   if (response.status === 401 || response.status === 403) {
     throw new NessieError("auth", "The bank data service rejected our credentials.", {
       status: response.status,
-      detail: redactKey(url),
+      detail: `HTTP ${response.status} from ${endpoint}`,
     });
   }
   if (response.status === 404) {
-    throw new NessieError("not_found", "We couldn't find that bank customer.", {
+    throw new NessieError("not_found", CUSTOMER_NOT_FOUND, {
       status: 404,
-      detail: redactKey(url),
+      detail: `HTTP 404 from ${endpoint}`,
     });
   }
   if (!response.ok) {
     throw new NessieError("upstream", UNAVAILABLE, {
       status: response.status,
-      detail: `HTTP ${response.status} from ${redactKey(url)}`,
+      detail: `HTTP ${response.status} from ${endpoint}`,
     });
   }
 
   try {
     return await response.json();
   } catch {
-    throw new NessieError("invalid_response", UNAVAILABLE, { detail: `non-JSON body from ${redactKey(url)}` });
+    throw new NessieError("invalid_response", UNAVAILABLE, { detail: `non-JSON body from ${endpoint}` });
   }
 }
 
 async function getList<T>(cfg: LiveNessieConfig, path: string, amountField: string): Promise<ListResult<T>> {
   const body = await nessieGet(cfg, path);
-  return validateList<T>(body, amountField, `${cfg.baseUrl}${path}`);
+  return validateList<T>(body, amountField, describeEndpoint(path));
 }
 
 export function getCustomerAccounts(cfg: LiveNessieConfig, customerId: string) {
@@ -148,14 +158,10 @@ function tag<T>(records: T[], accountId: string): WithAccount<T>[] {
   return records.map((record) => ({ ...record, accountId }));
 }
 
-/** Shows only enough of an id to tell customers apart in logs. */
-export function maskId(id: string): string {
-  return id.length > 8 ? `${id.slice(0, 8)}…` : id;
-}
-
-const UNVERIFIED_CUSTOMER_HINT = (id: string) =>
-  `customer ${maskId(id)}: Nessie returns an empty list for an unknown NESSIE_CUSTOMER_ID or an invalid NESSIE_API_KEY — verify both`;
-const EMPTY_CUSTOMER_HINT = (id: string) => `customer ${maskId(id)} exists but has no accounts — seed it in the sandbox`;
+// Hints name the settings, never their values.
+const UNVERIFIED_CUSTOMER_HINT =
+  "Nessie returns an empty list for an unknown NESSIE_CUSTOMER_ID or an invalid NESSIE_API_KEY — verify both";
+const EMPTY_CUSTOMER_HINT = "the configured NESSIE_CUSTOMER_ID exists but has no accounts — seed it in the sandbox";
 
 /**
  * An empty account list is ambiguous: Nessie answers `200 []` for a real
@@ -167,16 +173,11 @@ async function explainEmptyAccounts(cfg: LiveNessieConfig): Promise<NessieError>
     await nessieGet(cfg, `/customers/${encodeURIComponent(cfg.customerId)}`);
   } catch (err) {
     if (err instanceof NessieError && err.kind === "not_found") {
-      return new NessieError("not_found", "We couldn't find that bank customer.", {
-        status: 404,
-        detail: UNVERIFIED_CUSTOMER_HINT(cfg.customerId),
-      });
+      return new NessieError("not_found", CUSTOMER_NOT_FOUND, { status: 404, detail: UNVERIFIED_CUSTOMER_HINT });
     }
     throw err;
   }
-  return new NessieError("insufficient_data", "No accounts for this Nessie customer.", {
-    detail: EMPTY_CUSTOMER_HINT(cfg.customerId),
-  });
+  return new NessieError("insufficient_data", NO_ACCOUNTS, { detail: EMPTY_CUSTOMER_HINT });
 }
 
 /** Pulls every read-only resource the cash-flow analyzer needs. */
@@ -186,15 +187,18 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     accountsResult = await getCustomerAccounts(cfg, cfg.customerId);
   } catch (err) {
     if (err instanceof NessieError && err.kind === "not_found") {
-      throw new NessieError("not_found", "No accounts for this Nessie customer.", {
-        status: 404,
-        detail: UNVERIFIED_CUSTOMER_HINT(cfg.customerId),
-      });
+      throw new NessieError("not_found", CUSTOMER_NOT_FOUND, { status: 404, detail: UNVERIFIED_CUSTOMER_HINT });
     }
     throw err;
   }
 
   const accounts = accountsResult.records;
+  if (accounts.length === 0 && accountsResult.dropped > 0) {
+    // Accounts exist but none passed validation — not the same as having none.
+    throw new NessieError("invalid_response", UNREADABLE_ACCOUNTS, {
+      detail: `${accountsResult.dropped} account record(s) failed validation from ${describeEndpoint("/customers/:id/accounts")}`,
+    });
+  }
   if (accounts.length === 0) {
     throw await explainEmptyAccounts(cfg);
   }

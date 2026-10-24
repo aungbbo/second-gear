@@ -1,4 +1,4 @@
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
 import type { NessieSnapshot } from "@/lib/nessie/types";
 import type { BuyerNeed } from "@/lib/types";
 
@@ -8,6 +8,32 @@ export const API_KEY = "secret-key-123";
 export const CUSTOMER_ID = "cust1";
 
 export const LIVE_CONFIG = { mode: "live" as const, apiKey: API_KEY, customerId: CUSTOMER_ID, baseUrl: BASE_URL };
+
+// Synthetic values in the real Nessie formats, for leak tests.
+export const REAL_FORMAT_CUSTOMER_ID = "abcdef12-3456-4789-8abc-def012345678";
+export const REAL_FORMAT_ACCOUNT_ID = "5f1e2d3c4b5a69788796a5b4";
+export const REAL_FORMAT_KEY = "0123456789abcdef0123456789abcdef";
+
+/**
+ * Values that must never reach an error message or log. Short fixture account
+ * ids are only checked in path form — a bare "cc" would match "account".
+ */
+export const SENSITIVE = [
+  API_KEY,
+  CUSTOMER_ID,
+  BASE_URL,
+  "key=",
+  "/customers/cust1",
+  "/accounts/chk",
+  "/accounts/sav",
+  "/accounts/cc",
+];
+
+/** Asserts none of the secrets appear, without printing the text or secrets on failure. */
+export function expectNoLeaks(text: string, secrets: string[]) {
+  const leaked = secrets.filter((s) => s && text.includes(s)).length;
+  expect(leaked, "sensitive values leaked (count)").toBe(0);
+}
 
 export const NEED: BuyerNeed = {
   description: "A reliable commuter",

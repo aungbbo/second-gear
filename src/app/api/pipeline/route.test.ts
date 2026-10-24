@@ -8,8 +8,10 @@ import {
   CUSTOMER_ID,
   NEED,
   NOW,
+  SENSITIVE,
   baselineRoutes,
   baselineSnapshot,
+  expectNoLeaks,
   stubNessieFetch,
 } from "@/lib/nessie/__tests__/fixtures";
 import type { PipelineResult } from "@/lib/types";
@@ -17,10 +19,18 @@ import type { PipelineResult } from "@/lib/types";
 // The other providers still simulate a few seconds of latency each.
 vi.setConfig({ testTimeout: 20000 });
 
+function stubLiveEnv() {
+  vi.stubEnv("NESSIE_MODE", "live");
+  vi.stubEnv("NESSIE_API_KEY", API_KEY);
+  vi.stubEnv("NESSIE_CUSTOMER_ID", CUSTOMER_ID);
+  vi.stubEnv("NESSIE_BASE_URL", BASE_URL);
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 function pipelineRequest() {
@@ -72,8 +82,41 @@ describe("POST /api/pipeline", () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     const response = await POST(pipelineRequest());
     expect(response.status).toBe(502);
-    expect(JSON.stringify(await response.json())).not.toContain(API_KEY);
-    expect(JSON.stringify(errorLog.mock.calls)).not.toContain(API_KEY);
+    expectNoLeaks(JSON.stringify(await response.json()), [API_KEY]);
+    expectNoLeaks(JSON.stringify(errorLog.mock.calls), [API_KEY]);
+  });
+
+  it("returns 422 when the customer can't be verified", async () => {
+    stubLiveEnv();
+    stubNessieFetch({ [`/customers/${CUSTOMER_ID}/accounts`]: [] });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await POST(pipelineRequest());
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: "We couldn't find that bank customer." });
+    expectNoLeaks(JSON.stringify(errorLog.mock.calls), SENSITIVE);
+  });
+
+  it("returns 422 when a verified customer has no accounts", async () => {
+    stubLiveEnv();
+    stubNessieFetch({
+      [`/customers/${CUSTOMER_ID}/accounts`]: [],
+      [`/customers/${CUSTOMER_ID}`]: { _id: CUSTOMER_ID },
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await POST(pipelineRequest());
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({ error: "No accounts for this Nessie customer." });
+    expectNoLeaks(JSON.stringify(errorLog.mock.calls), SENSITIVE);
+  });
+
+  it("never logs ids, host, or key on upstream errors", async () => {
+    stubLiveEnv();
+    stubNessieFetch({ ...baselineRoutes(), "/accounts/chk/deposits": { status: 401 } });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await POST(pipelineRequest());
+    expect(response.status).toBe(502);
+    expect(errorLog).toHaveBeenCalled();
+    expectNoLeaks(JSON.stringify(errorLog.mock.calls), SENSITIVE);
   });
 
   it("feeds live Nessie affordability into the rest of the pipeline", async () => {
