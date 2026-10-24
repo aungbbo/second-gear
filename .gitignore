@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Nessie seed manifest (sandbox ids)
+/.nessie-seed*.local.json
