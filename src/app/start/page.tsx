@@ -34,6 +34,7 @@ function StartFlow() {
   const [phase, setPhase] = useState<Phase>("intake");
   const [need, setNeed] = useState<BuyerNeed>(() => defaultNeed(searchParams));
   const [result, setResult] = useState<PipelineResult | null>(null);
+  const [consentToken, setConsentToken] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -52,17 +53,28 @@ function StartFlow() {
           )}
 
           {phase === "consent" && (
-            <ConsentStep need={need} onApprove={() => setPhase("pipeline")} onBack={() => setPhase("intake")} />
+            <ConsentStep
+              need={need}
+              onApprove={(token) => {
+                setConsentToken(token);
+                setPhase("pipeline");
+              }}
+              onBack={() => setPhase("intake")}
+            />
           )}
 
-          {phase === "pipeline" && (
+          {phase === "pipeline" && consentToken && (
             <PipelineTimeline
               need={need}
+              consentToken={consentToken}
               onComplete={(r) => {
+                // The token is single-use; a new run asks for consent again.
+                setConsentToken(null);
                 setResult(r);
                 setPhase("results");
               }}
               onError={(message) => {
+                setConsentToken(null);
                 setError(message);
                 setPhase("intake");
               }}

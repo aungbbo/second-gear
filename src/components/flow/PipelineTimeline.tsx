@@ -6,6 +6,8 @@ import type { BuyerNeed, PipelineResult } from "@/lib/types";
 
 interface PipelineTimelineProps {
   need: BuyerNeed;
+  /** Server-issued, single-use soft-pull consent token from the consent step. */
+  consentToken: string;
   onComplete: (result: PipelineResult) => void;
   onError: (message: string) => void;
 }
@@ -24,7 +26,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function PipelineTimeline({ need, onComplete, onError }: PipelineTimelineProps) {
+export function PipelineTimeline({ need, consentToken, onComplete, onError }: PipelineTimelineProps) {
   const [status, setStatus] = useState<Status[]>(Array(5).fill("pending"));
   const [notes, setNotes] = useState<(string | null)[]>(Array(5).fill(null));
   const startedRef = useRef(false);
@@ -47,7 +49,7 @@ export function PipelineTimeline({ need, onComplete, onError }: PipelineTimeline
       const resultPromise = fetch("/api/pipeline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ need }),
+        body: JSON.stringify({ need, consentToken }),
       }).then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -70,7 +72,7 @@ export function PipelineTimeline({ need, onComplete, onError }: PipelineTimeline
       }
 
       const realNotes = [
-        `Score ${data.credit.score} · ${data.credit.tierLabel} · APR likely ${data.credit.estimatedApr.min}–${data.credit.estimatedApr.max}%`,
+        `Score ${data.credit.score} · ${data.credit.tierLabel} · est. APR ${data.credit.estimatedApr.min}–${data.credit.estimatedApr.max}% (our estimate)`,
         `Safe ceiling $${data.affordability.recommendedPayment}/mo, read from real cash flow`,
         `${data.listings.length} live listings found near ${need.zip}`,
         `${data.listings.length} cars priced across 4 loan terms each`,

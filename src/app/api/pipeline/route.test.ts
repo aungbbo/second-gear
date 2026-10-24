@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { POST } from "@/app/api/pipeline/route";
+import { issueConsentToken, SOFT_PULL_CONSENT_VERSION } from "@/lib/consent";
 import { analyzeSnapshot } from "@/lib/nessie/cashflow";
 import {
   API_KEY,
@@ -15,6 +16,7 @@ import {
   stubNessieFetch,
 } from "@/lib/nessie/__tests__/fixtures";
 import type { PipelineResult } from "@/lib/types";
+import { __resetRateLimitsForTests } from "@/lib/rate-limit";
 
 // The other providers still simulate a few seconds of latency each.
 vi.setConfig({ testTimeout: 20000 });
@@ -33,11 +35,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The credit step now needs explicit mode and consent; these Nessie-focused tests use the CRS mock.
+beforeEach(() => {
+  vi.stubEnv("CONSENT_STORE", "memory");
+  vi.stubEnv("RATE_LIMIT_MODE", "memory");
+  vi.stubEnv("CRS_MODE", "mock");
+  __resetRateLimitsForTests();
+});
+
 function pipelineRequest() {
+  const { consentToken } = issueConsentToken({ softPullAuthorized: true, textVersion: SOFT_PULL_CONSENT_VERSION });
   return new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ need: NEED }),
+    headers: { "content-type": "application/json", "x-forwarded-for": `192.0.2.${Math.floor(Math.random() * 200) + 1}` },
+    body: JSON.stringify({ need: NEED, consentToken }),
   });
 }
 
@@ -71,6 +82,16 @@ describe("POST /api/pipeline", () => {
     expect(await response.json()).toEqual({
       error: "Cash-flow provider not configured: missing NESSIE_API_KEY and NESSIE_CUSTOMER_ID.",
     });
+  });
+
+  it("returns 503 before providers when consent replay storage is unavailable", async () => {
+    const request = pipelineRequest();
+    vi.stubEnv("CONSENT_STORE", "upstash");
+    vi.stubEnv("UPSTASH_REDIS_REST_URL", "");
+    vi.stubEnv("UPSTASH_REDIS_REST_TOKEN", "");
+    const response = await POST(request);
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: "Consent service is not configured." });
   });
 
   it("returns 502 and hides the key when Nessie rejects the credentials", async () => {

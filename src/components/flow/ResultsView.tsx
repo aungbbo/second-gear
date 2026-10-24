@@ -47,7 +47,7 @@ export function ResultsView({ result, onGetPacket, onStartOver }: ResultsViewPro
               <p className="font-display text-xl tabular">
                 {credit.estimatedApr.min}–{credit.estimatedApr.max}%
               </p>
-              <p className="text-xs text-ink-soft">likely APR range</p>
+              <p className="text-xs text-ink-soft">estimated APR range — our estimate, not a lender offer</p>
             </div>
           </div>
         </div>
