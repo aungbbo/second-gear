@@ -5,7 +5,7 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 ## Product workflow
 
 ```mermaid
-%%{init: {"flowchart": {"nodeSpacing": 60, "rankSpacing": 70, "wrappingWidth": 180, "minNodeWidth": 220, "padding": 20}, "themeVariables": {"fontSize": "16px"}}}%%
+%%{init: {"htmlLabels": true, "flowchart": {"nodeSpacing": 60, "rankSpacing": 70, "wrappingWidth": 180, "minNodeWidth": 220, "padding": 20}, "themeVariables": {"fontSize": "16px"}}}%%
 flowchart TD
     A["Buyer<br/>Next.js UI<br/>Request +<br/>consent"]
     B["CRS credit<br/>API<br/>Credit profile<br/>Estimated APR"]
@@ -27,6 +27,9 @@ flowchart TD
     D --> G
     G --> H
     H --> I
+
+    classDef centered text-align:center;
+    class A,B,C,D,E,F,G,H,I centered;
 ```
 
 ### 1. Buyer - Next.js UI
