@@ -1,12 +1,15 @@
 import { ApifyError } from "@/lib/apify/errors";
 
 export const DEFAULT_APIFY_BASE_URL = "https://api.apify.com/v2";
-/** The mapper is written against this Actor's declared dataset schema. */
-export const DEFAULT_LISTINGS_ACTOR_ID = "caffein.dev/autotrader-com-actor";
 /**
- * Radii both the Actor's input schema and its README list. The schema also
- * accepts 75, 300 and 400, but the README omits them, so they are left out
- * until a run shows AutoTrader honours them. `0` (nationwide) is never used.
+ * The search input and mapper are written against this Actor's input schema
+ * and dataset. It replaced `caffein.dev/autotrader-com-actor`, which stopped
+ * extracting listings (run LsvDXEItj2oKxpThV: "__NEXT_DATA__ script tag not found").
+ */
+export const DEFAULT_LISTINGS_ACTOR_ID = "skootle/cars-com-scraper";
+/**
+ * Default radii the app offers. The Actor takes any whole number of miles;
+ * this list is kept so a typo can't turn into a nationwide search.
  */
 export const SEARCH_RADIUS_OPTIONS = ["10", "25", "50", "100", "200", "500"] as const;
 export type SearchRadius = (typeof SEARCH_RADIUS_OPTIONS)[number];

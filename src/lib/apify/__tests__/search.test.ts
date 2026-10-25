@@ -1,67 +1,70 @@
 import { describe, expect, it } from "vitest";
-import { buildSearchInput, detectMake, priceCeiling } from "@/lib/apify/search";
-import { principalForPayment } from "@/lib/calculations";
-import { AFFORDABILITY, CREDIT, LIVE_CFG, NEED } from "./fixtures";
+import { buildSearchInput, MIN_PRICE, searchMaxPrice } from "@/lib/apify/search";
+import type { VehicleSearchPlan } from "@/lib/search-plan";
+import type { AffordableSearchConstraints } from "@/lib/types";
+import { CONSTRAINTS, LIVE_CFG, NEED, PLAN } from "./fixtures";
 
-const input = (description: string, extra: Partial<typeof NEED> = {}) =>
-  buildSearchInput({ ...NEED, description, ...extra }, AFFORDABILITY, CREDIT, LIVE_CFG);
+const NOW = new Date("2026-10-25T12:00:00Z");
+
+const input = (plan: Partial<VehicleSearchPlan> = {}, constraints: AffordableSearchConstraints = CONSTRAINTS) =>
+  buildSearchInput({ need: { ...NEED, zip: "95823" }, constraints, plan: { ...PLAN, ...plan } }, LIVE_CFG, NOW);
 
 describe("buildSearchInput", () => {
-  it("sends location, price bounds and caps, but never the free text", () => {
-    const result = input("A reliable car to commute, nothing fancy.");
-    expect(result).toEqual({
-      zip: "43215",
-      searchRadius: "50",
-      minPrice: 3000,
-      maxPrice: priceCeiling(NEED, AFFORDABILITY, CREDIT),
+  it("builds the input of the tested Cars.com run from the Corolla plan and a $17,000 assessment", () => {
+    expect(input({ minYear: 2017, maxMileage: 100000 })).toEqual({
+      make: "Toyota",
+      model: "Corolla",
+      yearMin: 2017,
+      yearMax: 2027,
+      priceMax: 17000,
+      mileageMax: 100000,
+      zip: "95823",
+      searchRadius: 50,
+      condition: "USED",
       maxItems: 25,
-      sortBy: "relevance",
     });
   });
 
-  it("uses a single named make as the keyword", () => {
-    expect(input("Looking for a used Toyota").keyword).toBe("Toyota");
-    expect(input("my old chevy died").keyword).toBe("Chevrolet");
-  });
-
-  it("omits the keyword when several makes are named", () => {
-    expect(input("Honda or Toyota, either is fine").keyword).toBeUndefined();
-  });
-
-  it("does not match makes inside other words", () => {
-    expect(detectMake("a ramble about cars")).toBeUndefined();
-    expect(detectMake("need a ram 1500")).toBe("Ram");
+  it("always sends every field, so the Actor's BMW / 3 Series / 2020–2024 defaults never apply", () => {
+    const result = input({ model: null, minYear: null, maxMileage: null });
+    expect(result).toMatchObject({ make: "Toyota", model: "", yearMin: 1990, yearMax: 2027, mileageMax: 0 });
   });
 
   it.each([
-    ["small SUV for the family", "SUVCROSS"],
-    ["a pickup for work", "TRUCKS"],
-    ["minivan with sliding doors", "VANMV"],
-    ["hatchback, easy to park", "HATCH"],
-    ["plain sedan", "SEDAN"],
-  ])("maps %j to vehicleStyleCode %s", (description, code) => {
-    expect(input(description).vehicleStyleCode).toBe(code);
+    ["no make", null],
+    ["a blank make", "  "],
+  ])("refuses to search with %s instead of defaulting to one", (_, make) => {
+    expect(() => input({ make })).toThrow(expect.objectContaining({ kind: "missing_make" }));
   });
 
-  it("maps hybrid and electric to the fuel filter", () => {
-    expect(input("a hybrid to save on gas").fuelTypeGroup).toBe("HYB");
-    expect(input("an electric commuter").fuelTypeGroup).toBe("ELE");
-    expect(input("a commuter").fuelTypeGroup).toBeUndefined();
+  it("takes the stricter year and mileage of the plan and the buyer's preferences", () => {
+    const constraints = { ...CONSTRAINTS, minYear: 2019, maxMileage: 80000 };
+    expect(input({ minYear: 2017, maxMileage: 100000 }, constraints)).toMatchObject({ yearMin: 2019, mileageMax: 80000 });
+    expect(input({ minYear: 2021, maxMileage: 60000 }, constraints)).toMatchObject({ yearMin: 2021, mileageMax: 60000 });
+  });
+
+  it("uses the buyer's radius when given, else the configured one", () => {
+    expect(input({}, { ...CONSTRAINTS, radiusMiles: 25 }).searchRadius).toBe(25);
+    expect(input({}, CONSTRAINTS).searchRadius).toBe(50);
+  });
+
+  it("ignores money, location and unknown values a planner slips into the plan", () => {
+    const sneaky = { ...PLAN, priceMax: 99999, maxPrice: 99999, zip: "10001", searchRadius: 500, bodyStyles: ["spaceship"], minYear: 1850 } as unknown as VehicleSearchPlan;
+    const result = buildSearchInput({ need: { ...NEED, zip: "95823" }, constraints: CONSTRAINTS, plan: sneaky }, LIVE_CFG, NOW);
+    expect(result).toMatchObject({ priceMax: 17000, zip: "95823", searchRadius: 50, yearMin: 1990 });
+  });
+
+  it("refuses to search when the assessment leaves no room above the minimum price", () => {
+    for (const maxPrice of [0, 2100, MIN_PRICE, Number.NaN]) {
+      expect(() => input({}, { ...CONSTRAINTS, maxPrice })).toThrow(expect.objectContaining({ kind: "no_affordable_price" }));
+    }
   });
 });
 
-describe("priceCeiling", () => {
-  it("is what the safe payment finances over 72 months at the best APR, plus 20% headroom", () => {
-    const financeable = principalForPayment(400, 13, 72);
-    expect(priceCeiling(NEED, AFFORDABILITY, CREDIT)).toBe(Math.round((financeable * 1.2) / 500) * 500);
-  });
-
-  it("adds the down payment", () => {
-    const base = priceCeiling(NEED, AFFORDABILITY, CREDIT);
-    expect(priceCeiling({ ...NEED, downPayment: 2000 }, AFFORDABILITY, CREDIT)).toBe(base + 2000);
-  });
-
-  it("never drops below the minimum search price", () => {
-    expect(priceCeiling(NEED, { ...AFFORDABILITY, maxSustainablePayment: 10 }, CREDIT)).toBe(4000);
+describe("searchMaxPrice", () => {
+  it("is the assessment's maximum affordable vehicle price, rounded down", () => {
+    expect(searchMaxPrice(CONSTRAINTS)).toBe(17000);
+    expect(searchMaxPrice({ ...CONSTRAINTS, maxPrice: 12345.9 })).toBe(12345);
+    expect(searchMaxPrice({ ...CONSTRAINTS, maxPrice: MIN_PRICE + 1 })).toBe(MIN_PRICE + 1);
   });
 });

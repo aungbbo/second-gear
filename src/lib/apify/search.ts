@@ -1,90 +1,70 @@
 import type { LiveApifyConfig } from "@/lib/apify/config";
-import type { AutotraderSearchInput } from "@/lib/apify/types";
-import { principalForPayment } from "@/lib/calculations";
-import type { AffordabilityResult, BuyerNeed, CreditReport } from "@/lib/types";
+import { ApifyError, LISTINGS_MISSING_MAKE, LISTINGS_NO_AFFORDABLE_PRICE } from "@/lib/apify/errors";
+import type { CarsComSearchInput } from "@/lib/apify/types";
+import { normalizePlan, type VehicleSearchPlan } from "@/lib/search-plan";
+import type { AffordableSearchConstraints, BuyerNeed } from "@/lib/types";
 
-/** Longest term the loan comparison prices (see LOAN_TERMS_MONTHS). */
-const LONGEST_TERM_MONTHS = 72;
-/**
- * Search a little past what the budget can carry so the true-cost pass still
- * has over-budget tradeoffs to flag, as it does with the mock listings.
- */
-const PRICE_HEADROOM = 1.2;
-/** Skips salvage-priced listings that would dominate a cheapest-first ranking. */
-const MIN_PRICE = 3000;
-
-const MAKES = [
-  "Acura", "Audi", "BMW", "Buick", "Cadillac", "Chevrolet", "Chrysler", "Dodge", "Ford", "GMC",
-  "Honda", "Hyundai", "Infiniti", "Jeep", "Kia", "Lexus", "Lincoln", "Mazda", "Mercedes-Benz",
-  "Mitsubishi", "Nissan", "Ram", "Subaru", "Tesla", "Toyota", "Volkswagen", "Volvo",
-];
-const MAKE_ALIASES: Record<string, string> = { chevy: "Chevrolet", vw: "Volkswagen", mercedes: "Mercedes-Benz" };
+/** Skips salvage-priced listings that would dominate a cheapest-first ranking. The Actor has no minimum price, so the mapper applies it. */
+export const MIN_PRICE = 3000;
+/** Oldest model year the mapper accepts; sent so the Actor's own default (2020) never applies. */
+const EARLIEST_YEAR = 1990;
 
 /**
- * Codes from the Actor's input schema enum (latest build), which Apify
- * validates run input against: SUVCROSS "SUV / Crossover", TRUCKS "Truck",
- * VANMV "Van / Minivan". The README's table lists SUV/TRUCK/VAN/MINIVAN, which
- * the schema doesn't accept.
+ * The assessment's maximum affordable vehicle price, which already accounts
+ * for ownership costs, the emergency reserve and dealer fees. It is computed
+ * in code from the buyer's own numbers; no planner or AI output can raise it.
+ * Throws `no_affordable_price`, so no paid run starts, when it leaves nothing
+ * above the minimum search price.
  */
-const BODY_STYLES: [RegExp, NonNullable<AutotraderSearchInput["vehicleStyleCode"]>][] = [
-  [/\b(suv|crossover)s?\b/, "SUVCROSS"],
-  [/\b(truck|pickup)s?\b/, "TRUCKS"],
-  [/\b(minivan|van)s?\b/, "VANMV"],
-  [/\bhatch(back)?s?\b/, "HATCH"],
-  [/\bwagons?\b/, "WAGON"],
-  [/\bconvertibles?\b/, "CONVERT"],
-  [/\bcoupes?\b/, "COUPE"],
-  [/\bsedans?\b/, "SEDAN"],
-];
-
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** The single make the buyer named, if exactly one. Several makes can't be OR-ed in one search. */
-export function detectMake(text: string): string | undefined {
-  const found = new Set<string>();
-  for (const make of MAKES) if (new RegExp(`\\b${escape(make.toLowerCase())}\\b`).test(text)) found.add(make);
-  for (const [alias, make] of Object.entries(MAKE_ALIASES)) if (new RegExp(`\\b${alias}\\b`).test(text)) found.add(make);
-  return found.size === 1 ? [...found][0] : undefined;
+export function searchMaxPrice(constraints: AffordableSearchConstraints): number {
+  const max = constraints.maxPrice;
+  if (!Number.isFinite(max) || max <= MIN_PRICE) {
+    throw new ApifyError("no_affordable_price", LISTINGS_NO_AFFORDABLE_PRICE, { detail: `maxPrice=${Math.round(max)} minPrice=${MIN_PRICE}` });
+  }
+  return Math.floor(max);
 }
 
-/** Highest price worth searching: what the safe payment carries at the best estimated APR over the longest term. */
-export function priceCeiling(need: BuyerNeed, affordability: AffordabilityResult, credit: CreditReport): number {
-  const financeable = principalForPayment(affordability.maxSustainablePayment, credit.estimatedApr.min, LONGEST_TERM_MONTHS);
-  return Math.max(MIN_PRICE + 1000, Math.round((financeable * PRICE_HEADROOM + need.downPayment) / 500) * 500);
+const stricterMin = (...values: (number | null | undefined)[]) => {
+  const set = values.filter((v): v is number => typeof v === "number");
+  return set.length ? Math.max(...set) : undefined;
+};
+const stricterMax = (...values: (number | null | undefined)[]) => {
+  const set = values.filter((v): v is number => typeof v === "number" && v > 0);
+  return set.length ? Math.min(...set) : undefined;
+};
+
+export interface ListingsSearchContext {
+  need: BuyerNeed;
+  constraints: AffordableSearchConstraints;
+  plan: VehicleSearchPlan;
 }
 
 /**
- * Turns the buyer's need into the Actor's structured search. Only explicit
- * signals are used (a named make, a body style, hybrid/electric); the free
- * text itself is never sent, so a vague description can't zero out results.
+ * Turns the search plan and affordability limits into the Actor's input.
+ * Money and location come only from the need and the constraints; the plan
+ * can only narrow the vehicle. Throws before any paid run when the plan names
+ * no make (the Actor requires one, and its default would search BMWs) or the
+ * buyer can't afford a car above the minimum search price.
  */
 export function buildSearchInput(
-  need: BuyerNeed,
-  affordability: AffordabilityResult,
-  credit: CreditReport,
+  { need, constraints, plan: rawPlan }: ListingsSearchContext,
   cfg: Pick<LiveApifyConfig, "searchRadius" | "maxItems">,
-): AutotraderSearchInput {
-  const text = need.description.toLowerCase();
-  const input: AutotraderSearchInput = {
+  now = new Date(),
+): CarsComSearchInput {
+  const plan = normalizePlan(rawPlan);
+  const make = plan.make;
+  if (!make) throw new ApifyError("missing_make", LISTINGS_MISSING_MAKE, { detail: `plan source=${plan.source}` });
+
+  return {
+    make,
+    model: plan.model ?? "",
+    yearMin: stricterMin(plan.minYear, constraints.minYear) ?? EARLIEST_YEAR,
+    yearMax: now.getFullYear() + 1,
+    priceMax: searchMaxPrice(constraints),
+    mileageMax: stricterMax(plan.maxMileage, constraints.maxMileage) ?? 0,
     zip: need.zip,
-    searchRadius: cfg.searchRadius,
-    minPrice: MIN_PRICE,
-    maxPrice: priceCeiling(need, affordability, credit),
+    searchRadius: constraints.radiusMiles ?? Number(cfg.searchRadius),
+    condition: "USED",
     maxItems: cfg.maxItems,
-    sortBy: "relevance",
   };
-
-  const make = detectMake(text);
-  if (make) input.keyword = make;
-
-  const style = BODY_STYLES.find(([pattern]) => pattern.test(text));
-  if (style) input.vehicleStyleCode = style[1];
-
-  // Schema codes: HYB "Hybrid", ELE "Electric" (the README's ELC isn't in the enum).
-  if (/\bhybrids?\b/.test(text)) input.fuelTypeGroup = "HYB";
-  else if (/\b(electric|ev)s?\b/.test(text)) input.fuelTypeGroup = "ELE";
-
-  // `listingType` stays unset: it takes one value, and USED alone may leave out
-  // certified pre-owned cars (CERTIFIED, 3P_CERT). New cars are dropped by the mapper.
-  return input;
 }
