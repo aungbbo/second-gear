@@ -6,15 +6,15 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 
 ```mermaid
 flowchart TD
-    A[Buyer - Next.js UI<br/>Natural-language request + budget + consent]
-    B[CRS Credit API<br/>Credit profile + estimated APR]
-    C[Capital One Nessie<br/>Income, expenses + debt]
-    D[Deterministic Affordability Engine<br/>Safe payment · ownership budget · maximum car price]
-    E[Bitdeer AI - Search Planning<br/>Intent + soft preferences + Apify filters]
-    F[Apify AutoTrader Actor<br/>Used-car listings]
-    G[Deterministic Loan & Ownership Calculations<br/>APR · payment · total cost · negative equity]
-    H[Bitdeer AI - Explain & Rank<br/>Recommendations + negotiation guidance]
-    I[Ranked Cars + Dealer Packet<br/>Talking points + next steps for buyer]
+    A["Buyer<br/>Next.js UI<br/>Request · budget · consent"]
+    B["CRS Credit API<br/>Credit profile<br/>Estimated APR"]
+    C["Capital One Nessie<br/>Income · expenses<br/>Existing debt"]
+    D["Affordability Engine<br/>Safe payment<br/>Ownership budget<br/>Maximum car price"]
+    E["Bitdeer AI<br/>Search planning<br/>Preferences + filters"]
+    F["Apify AutoTrader<br/>Used-car listings"]
+    G["Loan & ownership<br/>Calculations<br/>Payment · total cost<br/>Negative equity"]
+    H["Bitdeer AI<br/>Explain & rank<br/>Recommendations<br/>Negotiation guidance"]
+    I["Ranked cars<br/>Dealer packet<br/>Talking points<br/>Next steps"]
 
     A --> B
     A --> C
