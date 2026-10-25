@@ -1,5 +1,3 @@
-import { timingSafeEqual } from "node:crypto";
-import type { NextRequest } from "next/server";
 import { Ratelimit } from "@upstash/ratelimit";
 import type { Redis } from "@upstash/redis";
 import { ConsentConfigurationError, ConsentStorageError, getUpstashRedis } from "@/lib/consent-store";
@@ -9,32 +7,11 @@ import type { VerifiedConsent } from "@/lib/consent";
 
 const localQuotaState = globalThis as typeof globalThis & { __secondGearLocalCrsQuota?: { count: number; reset: number } };
 
-export class LiveCrsAccessError extends Error {
-  readonly userMessage = "Live credit access is restricted.";
-  readonly status = 403;
-
-  constructor() {
-    super("Live CRS access authorization was not provided.");
-    this.name = "LiveCrsAccessError";
-  }
-}
-
-function configuredAccessMatches(provided: string | null, configured: string): boolean {
-  const expected = Buffer.from(configured);
-  const actual = Buffer.from(provided ?? "");
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
-}
-
-export function assertLiveCrsRequest(req: NextRequest): void {
+export function assertLiveCrsRequest(): void {
   if (process.env.CRS_MODE?.trim().toLowerCase() !== "live") return;
   if (process.env.CRS_LIVE_PULLS_ENABLED !== "true") {
     throw new CrsError("config", "Live credit access is disabled.", { detail: "CRS_LIVE_PULLS_ENABLED is not true" });
   }
-  const configured = process.env.CRS_LIVE_ACCESS_TOKEN;
-  if (!configured || Buffer.byteLength(configured) < 32) {
-    throw new CrsError("config", CRS_UNAVAILABLE, { detail: "missing CRS_LIVE_ACCESS_TOKEN" });
-  }
-  if (!configuredAccessMatches(req.headers.get("x-crs-live-access-token"), configured)) throw new LiveCrsAccessError();
 }
 
 function quotaConfig(): { limit: number; window: `${number} s` } {
@@ -48,7 +25,7 @@ function quotaConfig(): { limit: number; window: `${number} s` } {
 
 export async function reserveCrsPull(consent: VerifiedConsent, redisOverride?: Pick<Redis, "get">): Promise<void> {
   if (process.env.CRS_MODE?.trim().toLowerCase() !== "live") return;
-  if (consent.liveAccessAuthorized !== true) throw new LiveCrsAccessError();
+  if (consent.liveAccessAuthorized !== true) throw new CrsError("config", CRS_UNAVAILABLE, { detail: "live CRS pull attempted without verified live consent" });
   if (process.env.CRS_QUOTA_MODE === "memory" && !redisOverride) {
     if (process.env.NODE_ENV === "production") throw new CrsError("config", CRS_UNAVAILABLE, { detail: "CRS_QUOTA_MODE=memory is not allowed in production" });
     const limit = Number(process.env.CRS_GLOBAL_PULL_LIMIT ?? "5");

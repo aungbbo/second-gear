@@ -55,7 +55,6 @@ afterEach(async () => {
 function liveCrsEnv() {
   vi.stubEnv("CRS_MODE", "live");
   vi.stubEnv("CRS_LIVE_PULLS_ENABLED", "true");
-  vi.stubEnv("CRS_LIVE_ACCESS_TOKEN", "synthetic-live-access-token-0123456789012345");
   vi.stubEnv("APP_ORIGIN", "http://localhost");
   vi.stubEnv("CRS_USERNAME", SYNTH_USERNAME);
   vi.stubEnv("CRS_PASSWORD", SYNTH_PASSWORD);
@@ -84,7 +83,7 @@ const token = () => issueConsentToken({ softPullAuthorized: true, textVersion: S
 function request(body: object) {
   return new NextRequest("http://localhost/api/pipeline", {
     method: "POST",
-    headers: { "content-type": "application/json", "user-agent": "vitest", origin: "http://localhost", "x-crs-live-access-token": "synthetic-live-access-token-0123456789012345", "x-forwarded-for": "203.0.113.9, 10.0.0.1" },
+    headers: { "content-type": "application/json", "user-agent": "vitest", origin: "http://localhost", "x-forwarded-for": "203.0.113.9, 10.0.0.1" },
     body: JSON.stringify(body),
   });
 }

@@ -12,8 +12,8 @@ Set these in `.env.local` (server-only; never `NEXT_PUBLIC_`):
 |---|---|
 | `CRS_MODE` | `live` or `mock` |
 | `CRS_USERNAME`, `CRS_PASSWORD` | Sandbox credentials from the CRS team. **Quote the password.** |
-| `CRS_TEST_PERSONA` | `P05` (the only allowlisted persona) |
-| `CRS_PERSONA_SSN` | P05's 9-digit sandbox SSN from the CRS persona list. Not committed |
+| `CRS_TEST_PERSONA` | Allowlisted CRS sandbox persona ID (`P01`–`P20`; defaults to `P05` in `.env.example`) |
+| `CRS_PERSONA_SSN` | Matching persona's 9-digit sandbox SSN from the CRS persona list. Not committed |
 | `CRS_BUREAU`, `CRS_CONFIG`, `CRS_BASE_URL` | Optional. Defaults: `experian`, `exp-prequal-vantage4`, `https://api-sandbox.stitchcredit.com/api` |
 | `CONSENT_STORE` | `memory` only for local development/tests; production must use `upstash` |
 | `RATE_LIMIT_MODE` | `memory` only for local development/tests; omit in production to require Upstash |
@@ -21,7 +21,7 @@ Set these in `.env.local` (server-only; never `NEXT_PUBLIC_`):
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | Required in production when `CONSENT_STORE=upstash`; used for atomic global one-time token consumption |
 | `APP_ORIGIN` | Required in production; exact allowed browser origin for API POST requests |
 | `CRS_LIVE_PULLS_ENABLED` | Must be `true` for any live CRS pull; keep `false` for public demos |
-| `CRS_LIVE_ACCESS_TOKEN` | Required restricted-access secret for live CRS; never send to browser code |
+| `CRS_QUOTA_MODE` | Set to `memory` only for local development without Upstash; the process-local quota resets on restart. |
 | `CRS_GLOBAL_PULL_LIMIT`, `CRS_GLOBAL_PULL_WINDOW_SECONDS` | Optional global CRS quota; defaults to `5` per `86400` seconds |
 | `CRS_KILL_SWITCH_KEY` | Optional Redis key; value `disabled` immediately blocks live pulls |
 
@@ -76,3 +76,4 @@ It never includes names, SSNs, dates of birth, addresses, account numbers, credi
   - affordability depends only on the Nessie data
   - the CRS score sets the estimated APR band (540 → deep subprime, 18–24%)
 - Sandbox requests that don't match a persona reach a real vendor and are billable (`billable: true` in `GET /users/logs`). That is why only allowlisted personas can be pulled.
+- Live sandbox requests are gated by `CRS_LIVE_PULLS_ENABLED`, verified single-use consent, request rate limits, and a global CRS pull quota. Keep the switch off except while testing.

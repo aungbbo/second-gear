@@ -49,6 +49,10 @@ function FindMyCarFlow() {
         <ConsentStep
           need={need}
           onApprove={(token) => {
+            // A Credit Profile is backed by the last completed pipeline result.
+            // Clear it before a fresh run so a failed live request can't leave
+            // an older mock profile looking like the new result.
+            setResult(null);
             setConsentToken(token);
             setPhase("pipeline");
           }}

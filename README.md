@@ -188,7 +188,7 @@ CRS_MODE=mock
 CRS_LIVE_PULLS_ENABLED=false
 ```
 
-Restricted live CRS operation additionally requires server-only `CRS_LIVE_ACCESS_TOKEN`, `CRS_MODE=live`, and explicit live-pull enablement. Do not place live credentials in `NEXT_PUBLIC_*` variables or browser code.
+Live CRS sandbox operation requires `CRS_MODE=live` and explicit `CRS_LIVE_PULLS_ENABLED=true`. The API also requires verified consent and enforces request rate limits and a global pull quota. Keep credentials server-only and keep sandbox pulls disabled on public demos.
 
 The application uses session-bound consent, HMAC signing, expiration and version checks, atomic Redis replay protection, distributed rate limits, a global CRS pull quota, and an emergency kill switch. Required Redis or security configuration failures fail closed before CRS or Nessie is called.
 

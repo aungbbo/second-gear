@@ -39,7 +39,29 @@ export interface CreditFactor {
   detail: string;
 }
 
+/** High-level, identity-free facts from the bureau report. */
+export interface CreditReportInsights {
+  bureau: string;
+  scoreModel: string;
+  scorePercentile?: number;
+  reportDate?: string;
+  revolvingUtilizationPercent?: number;
+  accountCount?: number;
+  latePayments?: { thirtyDays: number; sixtyDays: number; ninetyPlusDays: number };
+  collections?: number;
+  chargeOffs?: number;
+  publicRecords?: number;
+  pastDueBalance?: number;
+  inquiriesLast6Months?: number;
+  creditHistoryYears?: number;
+}
+
 export interface CreditReport {
+  /** Where this report came from; included so the UI can distinguish sandbox data from generated demo data. */
+  source?: { mode: "mock" } | { mode: "crs_sandbox"; personaId: string; bureau: string };
+  insights?: CreditReportInsights;
+  /** Score reason text returned by the selected bureau; no synthetic weights are attached. */
+  bureauScoreFactors?: string[];
   score: number;
   tier: CreditTier;
   tierLabel: string;

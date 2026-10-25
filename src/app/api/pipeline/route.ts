@@ -6,7 +6,7 @@ import { assertSearchablePlan, searchLiveListings } from "@/lib/providers/apify"
 import { explainAndRank } from "@/lib/providers/bitdeer";
 import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
 import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
-import { assertLiveCrsRequest, LiveCrsAccessError } from "@/lib/crs/guard";
+import { assertLiveCrsRequest } from "@/lib/crs/guard";
 import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
 import { NessieError, NESSIE_ERROR_STATUS } from "@/lib/nessie/errors";
 import { ApifyError, type ApifyErrorKind } from "@/lib/apify/errors";
@@ -61,9 +61,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Request origin is not allowed." }, { status: 403 });
   }
   try {
-    assertLiveCrsRequest(req);
+    assertLiveCrsRequest();
   } catch (err) {
-    if (err instanceof LiveCrsAccessError) return NextResponse.json({ error: err.userMessage }, { status: 403 });
     if (err instanceof CrsError) return NextResponse.json({ error: err.userMessage }, { status: 503 });
     throw err;
   }
@@ -163,7 +162,6 @@ export async function POST(req: NextRequest) {
       const headers = err.retryAfterSeconds ? { "retry-after": String(err.retryAfterSeconds) } : undefined;
       return NextResponse.json({ error: err.userMessage }, { status: APIFY_ERROR_STATUS[err.kind], headers });
     }
-    if (err instanceof LiveCrsAccessError) return NextResponse.json({ error: err.userMessage }, { status: 403 });
     if (err instanceof ConsentConfigurationError || err instanceof ConsentStorageError) {
       return NextResponse.json({ error: err.userMessage }, { status: 503 });
     }

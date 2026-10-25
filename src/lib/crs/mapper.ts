@@ -5,7 +5,6 @@ import type { CrsCreditReportResponse, CrsScore, CrsTradeline } from "@/lib/crs/
 import type { CreditFactor, CreditReport } from "@/lib/types";
 
 export const MAX_FACTORS = 6;
-const MAX_BUREAU_FACTORS = 2;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** CRS sends numbers as strings ("540", "1,250.00", "85%"); anything unparseable is unknown. */
@@ -43,14 +42,7 @@ const sum = (values: (number | undefined)[]) => values.reduce<number>((total, v)
 const isOpen = (t: CrsTradeline) => !t.accountStatusType || t.accountStatusType === "Open";
 
 function utilizationFactor(report: CrsCreditReportResponse, tradelines: CrsTradeline[]): CreditFactor | null {
-  let percent: number | undefined;
-  const reported = num(report.summaries?.tradeSummary?.revolvingCreditUtilization);
-  if (reported !== undefined) percent = reported <= 1.5 ? reported * 100 : reported;
-  else {
-    const revolving = tradelines.filter((t) => t.accountType === "Revolving" && isOpen(t));
-    const limit = sum(revolving.map((t) => num(t.creditLimitAmount)));
-    if (limit > 0) percent = (sum(revolving.map((t) => num(t.currentBalanceAmount))) / limit) * 100;
-  }
+  const percent = revolvingUtilizationPercent(report, tradelines);
   if (percent === undefined) return null;
   const rounded = Math.round(percent);
   return {
@@ -58,6 +50,23 @@ function utilizationFactor(report: CrsCreditReportResponse, tradelines: CrsTrade
     impact: rounded > 30 ? "negative" : rounded < 10 ? "positive" : "neutral",
     detail: `Using ${rounded}% of available revolving credit — lenders prefer under 30%.`,
   };
+}
+
+function revolvingUtilizationPercent(report: CrsCreditReportResponse, tradelines: CrsTradeline[]): number | undefined {
+  const reported = num(report.summaries?.tradeSummary?.revolvingCreditUtilization);
+  if (reported !== undefined) return reported <= 1.5 ? reported * 100 : reported;
+  const revolving = tradelines.filter((t) => t.accountType === "Revolving" && isOpen(t));
+  const limit = sum(revolving.map((t) => num(t.creditLimitAmount)));
+  return limit > 0 ? (sum(revolving.map((t) => num(t.currentBalanceAmount))) / limit) * 100 : undefined;
+}
+
+function recentInquiryCount(report: CrsCreditReportResponse, asOf: number): number | undefined {
+  if (!report.inquiries) return undefined;
+  const sixMonthsAgo = asOf - 183 * DAY_MS;
+  return report.inquiries.filter((inquiry) => {
+    const date = parseCrsDate(inquiry.inquiryDate);
+    return date !== undefined && date >= sixMonthsAgo && date <= asOf + DAY_MS;
+  }).length;
 }
 
 function paymentHistoryFactor(report: CrsCreditReportResponse, tradelines: CrsTradeline[]): CreditFactor | null {
@@ -114,12 +123,8 @@ function publicRecordsFactor(report: CrsCreditReportResponse): CreditFactor | nu
 }
 
 function inquiriesFactor(report: CrsCreditReportResponse, asOf: number): CreditFactor | null {
-  if (!report.inquiries) return null;
-  const sixMonthsAgo = asOf - 183 * DAY_MS;
-  const recent = report.inquiries.filter((i) => {
-    const ms = parseCrsDate(i.inquiryDate);
-    return ms !== undefined && ms >= sixMonthsAgo && ms <= asOf + DAY_MS;
-  }).length;
+  const recent = recentInquiryCount(report, asOf);
+  if (recent === undefined) return null;
   return {
     label: "Credit inquiries, last 6 months",
     impact: recent >= 3 ? "negative" : "neutral",
@@ -175,11 +180,52 @@ export function mapCrsReport(
     parseCrsDate(report.responseDetail?.dateRequested) ??
     context.now ??
     Date.now();
+  const tradeSummary = report.summaries?.tradeSummary;
+  const derogatorySummary = report.summaries?.derogatorySummary;
+  const reportedThirtyDayLates = num(derogatorySummary?._30DayLates);
+  const reportedSixtyDayLates = num(derogatorySummary?._60DayLates);
+  const reportedNinetyDayLates = num(derogatorySummary?._90DayLates);
+  const hasLatePaymentData =
+    reportedThirtyDayLates !== undefined ||
+    reportedSixtyDayLates !== undefined ||
+    reportedNinetyDayLates !== undefined ||
+    tradelines.length > 0;
+  const collectionsFromTradelines = tradelines.filter((line) =>
+    line.currentRatingType === "Collection" || line.currentRatingType === "CollectionOrChargeOff",
+  ).length;
+  const chargeOffsFromTradelines = tradelines.filter((line) => line.currentRatingType === "ChargeOff").length;
+  const insights = {
+    bureau: BUREAU_LABELS[context.bureau],
+    scoreModel: chosen.modelName?.trim() || "Credit score model",
+    scorePercentile: num(chosen.scoreRankPercentileValue),
+    reportDate: Number.isFinite(asOf) ? new Date(asOf).toISOString().slice(0, 10) : undefined,
+    revolvingUtilizationPercent: revolvingUtilizationPercent(report, tradelines),
+    accountCount: num(tradeSummary?.tradesCount) ?? (tradelines.length || undefined),
+    latePayments: hasLatePaymentData
+      ? {
+          thirtyDays: reportedThirtyDayLates ?? sum(tradelines.map((t) => num(t._30DayLates))),
+          sixtyDays: reportedSixtyDayLates ?? sum(tradelines.map((t) => num(t._60DayLates))),
+          ninetyPlusDays: (reportedNinetyDayLates ?? sum(tradelines.map((t) => num(t._90DayLates)))) + sum(tradelines.map((t) => num(t._120DayLates))),
+        }
+      : undefined,
+    collections: num(derogatorySummary?.collectionsCount) ?? (tradelines.length ? collectionsFromTradelines : undefined),
+    chargeOffs: num(derogatorySummary?.chargeOffsCount) ?? (tradelines.length ? chargeOffsFromTradelines : undefined),
+    publicRecords: num(derogatorySummary?.publicRecordsCount) ?? (report.publicRecords ? report.publicRecords.length : undefined),
+    pastDueBalance: num(tradeSummary?.pastDueTotal) ?? (tradelines.length ? sum(tradelines.map((t) => num(t.pastDueAmount))) : undefined),
+    inquiriesLast6Months: recentInquiryCount(report, asOf),
+    creditHistoryYears: (() => {
+      const oldest = parseCrsDate(tradeSummary?.oldestTradelineDate) ??
+        tradelines.map((t) => parseCrsDate(t.accountOpenedDate)).filter((date): date is number => date !== undefined).sort((a, b) => a - b)[0];
+      return oldest === undefined ? undefined : Math.max(0, Math.floor((asOf - oldest) / (365.25 * DAY_MS)));
+    })(),
+  };
 
-  const bureauFactors: CreditFactor[] = (chosen.scoreFactors ?? [])
+  const bureauScoreFactors = (chosen.scoreFactors ?? [])
     .map((f) => f?.scoreFactorText?.trim())
     .filter((text): text is string => Boolean(text))
-    .slice(0, MAX_BUREAU_FACTORS)
+    .slice(0, MAX_FACTORS)
+    .map(scrubCrsDetail);
+  const bureauFactors: CreditFactor[] = bureauScoreFactors
     .map((text) => ({ label: "Bureau score factor", impact: "negative", detail: scrubCrsDetail(text) }));
 
   const derived = [
@@ -199,6 +245,8 @@ export function mapCrsReport(
     tierLabel,
     scoreRangeLabel,
     factors: [...bureauFactors, ...derived].slice(0, MAX_FACTORS),
+    bureauScoreFactors,
+    insights,
     estimatedApr: { min: aprMin, max: aprMax },
     hardInquiriesLast6mo: null,
     summary: `${BUREAU_LABELS[context.bureau]} soft-pull ${scrubCrsDetail(model)} of ${score} puts you in ${tierLabel.toLowerCase()} territory. For this score band, Second Gear estimates auto loans at ${aprMin}% to ${aprMax}% APR — our estimate, not a lender offer or approval.`,

@@ -27,6 +27,7 @@ export interface CrsScore {
   sourceType?: string;
   noScoreReasonType?: string;
   scoreValue?: string;
+  scoreRankPercentileValue?: string;
   scoreMinimumValue?: string;
   scoreMaximumValue?: string;
   scoreFactors?: { scoreFactorCode?: string; scoreFactorText?: string }[];
@@ -57,7 +58,9 @@ export interface CrsPublicRecord {
 
 export interface CrsSummaries {
   tradeSummary?: {
+    tradesCount?: string;
     revolvingCreditUtilization?: string;
+    pastDueTotal?: string;
     oldestTradelineDate?: string;
   };
   derogatorySummary?: {

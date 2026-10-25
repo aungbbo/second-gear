@@ -135,11 +135,11 @@ export function LiveAccountCard({ onData }: { onData?: (data: AccountsView) => v
           <span className="w-9 h-9 rounded-lg bg-teal-paper flex items-center justify-center shrink-0">
             <Landmark className="w-4.5 h-4.5 text-teal-deep" />
           </span>
-          <p className="font-medium">Live account</p>
+          <p className="font-medium">{data.source === "live" ? "Capital One sandbox" : "Demo account"}</p>
         </div>
         {data.source === "live" && (
           <span className="text-xs font-medium px-2 py-1 rounded-full shrink-0 bg-teal-paper text-teal-deep">
-            Live from Nessie
+            Nessie API
           </span>
         )}
       </div>

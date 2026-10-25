@@ -44,6 +44,10 @@ export default function CreditProfilePage() {
 
   const { credit } = result;
   const tips = tipsFor(credit.factors);
+  const insights = credit.insights;
+  const latePaymentCount = insights?.latePayments
+    ? insights.latePayments.thirtyDays + insights.latePayments.sixtyDays + insights.latePayments.ninetyPlusDays
+    : undefined;
 
   return (
     <section className="mx-auto max-w-4xl px-6 py-12 sm:py-16">
@@ -52,6 +56,13 @@ export default function CreditProfilePage() {
           <Eyebrow icon={<ShieldCheck className="w-3.5 h-3.5" />}>Your credit</Eyebrow>
           <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">Credit Profile</h1>
           <p className="mt-1 text-ink-soft">See what shapes your estimated loan rate.</p>
+          {credit.source && (
+            <p className="mt-2 inline-flex rounded-full bg-teal-paper px-3 py-1 text-xs font-medium text-teal-deep">
+              {credit.source.mode === "crs_sandbox"
+                ? `${credit.source.bureau} sandbox · ${credit.source.personaId}`
+                : "Generated demo profile · mock data"}
+            </p>
+          )}
         </div>
         <Link
           href="/find-my-car"
@@ -65,36 +76,107 @@ export default function CreditProfilePage() {
         <div className="bg-card border border-line rounded-2xl p-6 flex flex-col items-center justify-center">
           <p className="text-xs text-ink-soft mb-2">Estimated credit score</p>
           <Gauge value={credit.score} min={300} max={850} label={credit.tierLabel} />
+          {credit.insights?.scorePercentile !== undefined && (
+            <p className="mt-3 text-sm text-ink-soft">
+              <span className="font-semibold text-ink">{ordinal(credit.insights.scorePercentile)} percentile</span> rank
+            </p>
+          )}
         </div>
 
         <div className="bg-card border border-line rounded-2xl p-6">
-          <p className="font-medium">Credit factors</p>
-          <div className="mt-4 space-y-4">
-            {credit.factors.map((factor) => (
-              <FactorBar key={factor.label} factor={factor} />
-            ))}
-          </div>
+          <p className="font-medium">What contributes to this score</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            {credit.source?.mode === "crs_sandbox" && credit.insights
+              ? `Score factors reported by ${credit.insights.bureau}.`
+              : "Bureau-reported score factors appear here when a CRS report is used."}
+          </p>
+          {credit.bureauScoreFactors?.length ? (
+            <div className="mt-4 space-y-3">
+              {credit.bureauScoreFactors.map((factor, index) => (
+                <div key={`${index}-${factor}`} className="rounded-xl bg-paper px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium">Bureau factor {index + 1}</p>
+                    <span className="shrink-0 rounded-full bg-gold-paper px-2.5 py-1 text-[11px] font-medium text-gold-deep">
+                      Reported by CRS
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-relaxed text-ink-soft">{factor}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-4 rounded-xl bg-paper px-4 py-3 text-sm text-ink-soft">
+              No bureau score factors were included in this report.
+            </p>
+          )}
+          <p className="mt-3 text-xs text-ink-soft">
+            CRS provides these reason factors but no percentage weights for how much each one contributes.
+          </p>
         </div>
       </div>
 
-      <div className="mt-5 bg-card border border-line rounded-2xl p-6">
-        <p className="font-medium">How Your Credit Affects Your Loan</p>
-        <p className="text-sm text-ink-soft mt-1">
-          Lenders often offer lower rates when a profile shows on-time payments, lower card balances, and a longer history.
-        </p>
-        <div className="mt-5">
-          <div className="h-2.5 rounded-full bg-gradient-to-r from-teal to-gold" />
-          <div className="mt-1.5 flex justify-between text-xs tabular">
-            <span className="text-ink-soft">
-              {Math.max(5, credit.estimatedApr.min - 2)}% <span className="text-ink-soft/70">Stronger profile</span>
-            </span>
-            <span className="font-medium">
-              {credit.estimatedApr.min}–{credit.estimatedApr.max}% <span className="text-ink-soft font-normal">Current range</span>
-            </span>
+      {insights && (
+        <div className="mt-5 bg-card border border-line rounded-2xl p-6">
+          <p className="font-medium">What’s in your credit report</p>
+          <p className="mt-1 text-xs text-ink-soft">
+            {insights.bureau} · {insights.scoreModel}
+            {insights.reportDate ? ` · Reported ${formatReportDate(insights.reportDate)}` : ""}
+          </p>
+          <div className="mt-5 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {insights.revolvingUtilizationPercent !== undefined && (
+              <ReportMetric
+                label="Card utilization"
+                value={`${Math.round(insights.revolvingUtilizationPercent)}%`}
+                detail="Share of revolving credit currently used. Lower is generally better."
+              />
+            )}
+            {insights.accountCount !== undefined && (
+              <ReportMetric label="Accounts reported" value={String(insights.accountCount)} detail="Credit accounts found in this bureau file." />
+            )}
+            {insights.creditHistoryYears !== undefined && (
+              <ReportMetric
+                label="Credit history"
+                value={`About ${insights.creditHistoryYears} ${insights.creditHistoryYears === 1 ? "year" : "years"}`}
+                detail="Based on the oldest account reported."
+              />
+            )}
+            {latePaymentCount !== undefined && insights.latePayments && (
+              <ReportMetric
+                label="Late payments reported"
+                value={latePaymentCount === 0 ? "None reported" : String(latePaymentCount)}
+                detail={`${insights.latePayments.thirtyDays} at 30 days · ${insights.latePayments.sixtyDays} at 60 days · ${insights.latePayments.ninetyPlusDays} at 90+ days`}
+              />
+            )}
+            {(insights.collections !== undefined || insights.chargeOffs !== undefined) && (
+              <ReportMetric
+                label="Collections and charge-offs"
+                value={`${insights.collections ?? 0} collections · ${insights.chargeOffs ?? 0} charge-offs`}
+                detail="Negative account records reported by this bureau."
+              />
+            )}
+            {insights.pastDueBalance !== undefined && (
+              <ReportMetric
+                label="Past-due balance"
+                value={formatCurrency(insights.pastDueBalance)}
+                detail="Total past-due amount reported across accounts."
+              />
+            )}
+            {insights.inquiriesLast6Months !== undefined && (
+              <ReportMetric
+                label="Recent inquiries"
+                value={String(insights.inquiriesLast6Months)}
+                detail="Inquiries dated within the last six months; the report doesn’t identify which were hard pulls."
+              />
+            )}
+            {insights.publicRecords !== undefined && (
+              <ReportMetric label="Public records" value={String(insights.publicRecords)} detail="Bankruptcies, liens, or judgments reported in this file." />
+            )}
           </div>
+          <p className="mt-4 text-xs text-ink-soft">
+            This is one bureau’s report snapshot. Account details are summarized here; the report may not include every bureau or the latest activity.
+          </p>
         </div>
-        <p className="mt-3 text-xs text-ink-soft">Estimated range, not an offer or guarantee.</p>
-      </div>
+      )}
 
       <div className="mt-5 bg-card border border-line rounded-2xl p-6">
         <p className="font-medium">Ways to improve</p>
@@ -114,19 +196,29 @@ export default function CreditProfilePage() {
   );
 }
 
-function FactorBar({ factor }: { factor: CreditFactor }) {
-  const fill = factor.impact === "positive" ? "bg-teal" : factor.impact === "negative" ? "bg-gold" : "bg-ink-soft";
-  const width = factor.impact === "positive" ? "85%" : factor.impact === "negative" ? "55%" : "70%";
+function formatReportDate(value: string): string {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return value;
+  return new Date(year, month - 1, day).toLocaleDateString();
+}
 
+function ordinal(value: number): string {
+  const rounded = Math.round(value);
+  const remainder100 = rounded % 100;
+  const suffix = remainder100 >= 11 && remainder100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[rounded % 10] ?? "th";
+  return `${rounded}${suffix}`;
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(value);
+}
+
+function ReportMetric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div>
-      <div className="flex items-center justify-between text-sm">
-        <span className="font-medium">{factor.label}</span>
-      </div>
-      <div className="mt-1.5 h-2 rounded-full bg-paper-high overflow-hidden">
-        <div className={`h-full rounded-full ${fill}`} style={{ width }} />
-      </div>
-      <p className="mt-1 text-xs text-ink-soft">{factor.detail}</p>
+    <div className="rounded-xl bg-paper px-4 py-3">
+      <p className="text-xs text-ink-soft">{label}</p>
+      <p className="mt-1 font-display font-bold text-lg tabular">{value}</p>
+      <p className="mt-1 text-xs leading-relaxed text-ink-soft">{detail}</p>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { assertLiveCrsRequest, LiveCrsAccessError, reserveCrsPull, __resetCrsQuotaForTests } from "@/lib/crs/guard";
+import { assertLiveCrsRequest, reserveCrsPull, __resetCrsQuotaForTests } from "@/lib/crs/guard";
 import { RateLimitError, enforceRateLimits, __resetRateLimitsForTests } from "@/lib/rate-limit";
 import { assertRequestOrigin, OriginConfigurationError } from "@/lib/request-identity";
 import { POST as consentPOST } from "@/app/api/consent/route";
@@ -33,11 +33,10 @@ describe("distributed-control contracts", () => {
     expect(results.filter((result) => result.status === "rejected").every((result) => result.reason instanceof RateLimitError)).toBe(true);
   });
 
-  it("rejects live CRS without explicit authorization", () => {
+  it("keeps live CRS disabled unless explicitly enabled", () => {
     vi.stubEnv("CRS_MODE", "live");
-    vi.stubEnv("CRS_LIVE_PULLS_ENABLED", "true");
-    vi.stubEnv("CRS_LIVE_ACCESS_TOKEN", "x".repeat(32));
-    expect(() => assertLiveCrsRequest(new NextRequest("https://demo.test/api/pipeline"))).toThrow(LiveCrsAccessError);
+    vi.stubEnv("CRS_LIVE_PULLS_ENABLED", "false");
+    expect(() => assertLiveCrsRequest()).toThrow("Live credit access is disabled.");
   });
 
   it("enforces the global CRS quota before a later pull", async () => {
