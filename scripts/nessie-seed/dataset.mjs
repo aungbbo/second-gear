@@ -4,10 +4,12 @@
 // Shared by scripts/nessie-seed.mjs and the offline dataset tests; never
 // imported by the app.
 //
-// All amounts, dates, balances, and counts are generated from a seeded PRNG
-// keyed on (personaId + asOf). Same inputs always produce the same dataset,
-// so tests and the read-back verification are fully deterministic. Different
-// personas or dates produce realistic variation.
+// The default persona (sg-demo-subprime-02) is a fixed, hand-checked dataset:
+// it is the customer seeded and verified in the live sandbox, so --resume and
+// the read-back must keep regenerating exactly what is stored there. Any other
+// persona is generated from a PRNG keyed on the persona id alone, so each
+// persona gets its own realistic numbers. For every persona, dates are
+// relative to asOf: a later asOf shifts every date and changes nothing else.
 
 export const SEED_MARKER = "sg-seed:";
 
@@ -45,8 +47,8 @@ function mulberry32(seed) {
   };
 }
 
-function makeRng(personaId, asOf) {
-  const raw = mulberry32(fnv1a(`${personaId}|${asOf}`));
+function makeRng(personaId) {
+  const raw = mulberry32(fnv1a(personaId));
   return {
     /** Uniform float in [0, 1). */
     next: raw,
@@ -181,9 +183,9 @@ const GEOCODE_POOL = [
 /** @typedef {"grocery" | "gas" | "restaurant"} MerchantCategory */
 
 /**
- * Builds every POST body for the demo persona, dated relative to `asOf`.
- * All amounts, balances, dates, and payee names are generated from a
- * seeded PRNG keyed on (personaId + asOf) — deterministic but not hardcoded.
+ * Builds every POST body for a non-default persona, dated relative to `asOf`.
+ * Amounts, balances, payees and the day each stream lands on are drawn from
+ * a PRNG keyed on the persona id, so they never change with `asOf`.
  *
  * Records reference accounts by key and purchases reference merchants by
  * category; the runner swaps in real ids at apply time.
@@ -195,10 +197,10 @@ const GEOCODE_POOL = [
  * - nothing is deposited into savings (it would read as income);
  * - every record is 2–80 days old, inside the 90-day window.
  *
- * @param {{ asOf: string, personaId?: string, profile?: keyof typeof PROFILES }} options
+ * @param {{ asOf: string, personaId: string, profile?: keyof typeof PROFILES }} options
  */
-export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA, profile: profileKey = "subprime" }) {
-  const rng = makeRng(personaId, asOf);
+function buildGeneratedDataset({ asOf, personaId, profile: profileKey = "subprime" }) {
+  const rng = makeRng(personaId);
   const p = PROFILES[profileKey];
   const day  = (/** @type {number} */ daysAgo) => isoDay(asOf, daysAgo);
   const tag  = (/** @type {string} */ text) => `${SEED_MARKER} ${text}`;
@@ -220,11 +222,14 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA, profile: p
   const payrollPayee  = rng.pick(p.payrollPayees);
   const sidePayee     = rng.pick(p.sidePayees);
 
-  // Biweekly payroll: 6 occurrences spread across the 90-day window.
-  // Draw distinct days then sort; spacing stays natural because the pool is [3, 80].
-  const payrollDays = rng.distinctDays(80, 6);
-  // Monthly side income: 3 occurrences.
-  const sideDays = rng.distinctDays(80, 3);
+  // Payroll is biweekly and side income monthly, laid out as the analyzer's
+  // 30-day buckets see them: two paydays 14 days apart and one side payout in
+  // each bucket, so income volatility stays low. Random days would cluster
+  // paydays in one bucket and read as volatile income.
+  const payPhase  = rng.int(2, 6);
+  const payrollDays = [0, 1, 2].flatMap((b) => [b * 30 + payPhase, b * 30 + payPhase + 14]);
+  const sidePhase = rng.int(2, 20);
+  const sideDays  = [0, 1, 2].map((b) => b * 30 + sidePhase);
 
   const deposits = [
     ...payrollDays.map((d) => ({
@@ -239,9 +244,11 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA, profile: p
 
   // ---- withdrawals ----
   const electricPayee = rng.pick(p.electricPayees);
-  // 3 ATM withdrawals, 3 electric ACH withdrawals, all on distinct days.
-  const atmDays      = rng.distinctDays(80, 3);
-  const electricDays = rng.distinctDays(80, 3);
+  // 3 ATM withdrawals and 3 electric ACH withdrawals, one of each a month.
+  const atmPhase      = rng.int(2, 20);
+  const electricPhase = rng.int(2, 20);
+  const atmDays      = [0, 1, 2].map((b) => b * 30 + atmPhase);
+  const electricDays = [0, 1, 2].map((b) => b * 30 + electricPhase);
   const atmAmount    = rng.int(p.atmMin, p.atmMax);
 
   const withdrawals = [
@@ -355,6 +362,163 @@ export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA, profile: p
     purchases,
     loans,
   };
+}
+
+// ---------- verified default persona ----------
+
+const VERIFIED_ADDRESS = { street_number: "1200", street_name: "Demo Ave", city: "Columbus", state: "OH", zip: "43215" };
+const VERIFIED_GEOCODE = { lat: 39.9612, lng: -82.9988 };
+
+const VERIFIED_MERCHANTS = /** @type {const} */ ([
+  { category: "grocery", name: "Second Gear Demo Grocer" },
+  { category: "gas", name: "Second Gear Demo Gas" },
+  { category: "restaurant", name: "Second Gear Demo Diner" },
+]);
+
+const VERIFIED_PURCHASE_STREAMS = /** @type {const} */ ([
+  {
+    merchant: "grocery",
+    label: "Groceries",
+    days: [2, 9, 16, 23, 30, 37, 44, 51, 58, 65, 72, 79],
+    amounts: [82, 76, 94, 68, 101, 73, 88, 79, 112, 70, 85, 92],
+  },
+  { merchant: "gas", label: "Gas", days: [5, 19, 35, 49, 61, 75], amounts: [44, 41, 47, 45, 43, 50] },
+  { merchant: "restaurant", label: "Diner", days: [6, 20, 36, 50, 66, 80], amounts: [32, 28, 41, 35, 38, 36] },
+]);
+
+/**
+ * The verified default persona: payroll $1,650 biweekly + rideshare $150
+ * monthly, essentials $1,530/mo, a $140 loan and a $1,800 card (see
+ * docs/nessie-sandbox.md). Every value is fixed; only the dates move with `asOf`.
+ * Records reference accounts by key and purchases reference merchants by
+ * category; the runner swaps in real ids at apply time.
+ *
+ * Shape rules that keep the cash-flow analyzer honest:
+ * - everything transacts on checking, so Nessie can't move the card balance
+ *   that drives the card-minimum debt figure;
+ * - rent and the loan are never also posted as withdrawals (no double count);
+ * - nothing is deposited into savings (it would read as income);
+ * - every record is 2–80 days old, inside the 90-day window.
+ *
+ * @param {{ asOf: string, personaId: string }} options
+ */
+function buildVerifiedDataset({ asOf, personaId }) {
+  const day = (/** @type {number} */ daysAgo) => isoDay(asOf, daysAgo);
+  const tag = (/** @type {string} */ text) => `${SEED_MARKER} ${text}`;
+
+  const deposits = [
+    ...[3, 17, 33, 47, 63, 77].map((d) => ({
+      account: /** @type {AccountKey} */ ("checking"),
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 1650, description: tag(`Payroll - Acme Logistics (${day(d)})`) },
+    })),
+    ...[10, 40, 70].map((d) => ({
+      account: /** @type {AccountKey} */ ("checking"),
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 150, description: tag(`Rideshare payout (${day(d)})`) },
+    })),
+  ];
+
+  // One-off electric payments are ACH withdrawals, not bills: the live sandbox
+  // can't list a bill without a server-computed upcoming_payment_date, which it
+  // only derives for recurring bills. The analyzer averages withdrawals over the
+  // window exactly as it does one-off bills, so essentials are unchanged.
+  const electric = /** @type {const} */ ([
+    [12, 95],
+    [42, 110],
+    [72, 88],
+  ]);
+  const withdrawals = [
+    ...[8, 38, 68].map((d) => ({
+      account: /** @type {AccountKey} */ ("checking"),
+      body: { medium: "balance", status: TRANSACTION_STATUS, transaction_date: day(d), amount: 120, description: tag(`ATM cash (${day(d)})`) },
+    })),
+    ...electric.map(([d, amount]) => ({
+      account: /** @type {AccountKey} */ ("checking"),
+      body: {
+        medium: "balance",
+        status: TRANSACTION_STATUS,
+        transaction_date: day(d),
+        amount,
+        description: tag(`Electric ACH - AEP Ohio (${day(d)})`),
+      },
+    })),
+  ];
+
+  // Recurring bills only. BillCreate rejects upcoming_payment_date ("extra
+  // fields not permitted"); the sandbox computes it, and its bill list fails
+  // for any bill without one. recurring_date is the due day and payment_date
+  // the last due date on or before asOf.
+  const recurring = (/** @type {string} */ payee, /** @type {string} */ label, /** @type {number} */ dueDay, /** @type {number} */ amount) => ({
+    account: /** @type {AccountKey} */ ("checking"),
+    body: {
+      status: "recurring",
+      payee,
+      nickname: tag(label),
+      payment_date: monthlyDueDates(asOf, dueDay).last,
+      recurring_date: dueDay,
+      payment_amount: amount,
+    },
+  });
+  const bills = [recurring("Columbus Property Mgmt", "Rent", 1, 1250), recurring("Buckeye Fiber", "Internet", 15, 60)];
+
+  const purchases = VERIFIED_PURCHASE_STREAMS.flatMap((stream) =>
+    stream.days.map((d, i) => ({
+      account: /** @type {AccountKey} */ ("checking"),
+      merchant: /** @type {MerchantCategory} */ (stream.merchant),
+      body: {
+        medium: "balance",
+        status: TRANSACTION_STATUS,
+        purchase_date: day(d),
+        amount: stream.amounts[i],
+        description: tag(`${stream.label} (${day(d)})`),
+      },
+    })),
+  );
+
+  const loans = [
+    {
+      account: /** @type {AccountKey} */ ("checking"),
+      body: {
+        type: "small business",
+        status: "approved",
+        credit_score: 600,
+        monthly_payment: 140,
+        amount: 4200,
+        description: tag("Equipment loan"),
+      },
+    },
+  ];
+
+  return {
+    persona: personaId,
+    asOf,
+    customer: { first_name: "SecondGear", last_name: `Demo ${personaId}`, address: { ...VERIFIED_ADDRESS } },
+    accounts: [
+      { key: /** @type {AccountKey} */ ("checking"), body: { type: "Checking", nickname: "Everyday Checking", rewards: 0, balance: 1850 } },
+      { key: /** @type {AccountKey} */ ("savings"), body: { type: "Savings", nickname: "Rainy Day Savings", rewards: 0, balance: 2400 } },
+      { key: /** @type {AccountKey} */ ("card"), body: { type: "Credit Card", nickname: "Starter Card", rewards: 0, balance: 1800 } },
+    ],
+    merchantsNeeded: VERIFIED_MERCHANTS.map((m) => ({
+      category: /** @type {MerchantCategory} */ (m.category),
+      body: { name: m.name, category: m.category, address: { ...VERIFIED_ADDRESS }, geocode: { ...VERIFIED_GEOCODE } },
+    })),
+    deposits,
+    withdrawals,
+    bills,
+    purchases,
+    loans,
+  };
+}
+
+/**
+ * Builds every POST body for `personaId`, dated relative to `asOf`. Records
+ * reference accounts by key and purchases reference merchants by category;
+ * the runner swaps in real ids at apply time. The default persona is the
+ * fixed verified dataset; any other persona is generated.
+ *
+ * @param {{ asOf: string, personaId?: string, profile?: keyof typeof PROFILES }} options
+ */
+export function buildSeedDataset({ asOf, personaId = DEFAULT_PERSONA, profile }) {
+  return personaId === DEFAULT_PERSONA ? buildVerifiedDataset({ asOf, personaId }) : buildGeneratedDataset({ asOf, personaId, profile });
 }
 
 /** @typedef {ReturnType<typeof buildSeedDataset>} SeedDataset */

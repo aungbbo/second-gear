@@ -751,8 +751,9 @@ describe("seed runner against a mock Nessie", () => {
 
       const phase2 = await runSeed(["--apply", "--resume"]);
       expect(phase2.code).toBe(0);
-      // Remaining bulk = all records minus the 3 canaries already posted in this resume.
-      const expectedBulk = ds.deposits.length - 1 + ds.withdrawals.length - 1 + ds.bills.length + ds.purchases.length - 1 + ds.loans.length - 1;
+      // Remaining bulk = every record minus the five canaries: deposit and
+      // withdrawal from phase 1, then bill, purchase and loan in this resume.
+      const expectedBulk = ds.deposits.length - 1 + ds.withdrawals.length - 1 + ds.bills.length - 1 + ds.purchases.length - 1 + ds.loans.length - 1;
       expect(server.postCount - afterPhase1 - 3, "the remaining bulk records").toBe(expectedBulk);
       expect(server.customers).toHaveLength(1);
       expect(server.merchants).toHaveLength(3);
@@ -762,6 +763,8 @@ describe("seed runner against a mock Nessie", () => {
         purchases: ds.purchases.length,
         bills: ds.bills.length,
         loans: ds.loans.length,
+        // The mock also serves the Banking tab's transfers; the seed never posts one.
+        transfers: 0,
       });
       const manifest = readManifest();
       expect(manifest).toMatchObject({ complete: true, readBackMatches: true });

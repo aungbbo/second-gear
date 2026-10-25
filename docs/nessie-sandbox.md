@@ -92,6 +92,8 @@ Records: 9 deposits, 6 withdrawals, 2 bills, 24 purchases, 1 loan.
 | Essentials | Rent $1,250 + internet $60 (recurring bills); electric ACH ~$98/mo and ATM cash $120/mo (withdrawals) ≈ $1,530/mo |
 | Debt | Equipment loan $140/mo + card minimum ≈ $180/mo |
 | Discretionary | Groceries, gas, diner ≈ $500/mo |
+
+These values are fixed in `scripts/nessie-seed/dataset.mjs` for the default persona, because they are what is stored in the sandbox and what `--resume` and the read-back compare against. Only the dates move with the seed day. Any other `--persona` gets generated numbers instead: a PRNG keyed on the persona id picks amounts, payees, balances and the day each stream lands on, with payroll still biweekly and side income, ATM cash and electric monthly. The same persona always gets the same numbers.
 | Expected affordability | $400 budget → max $400 / recommended $350; $600 budget → max $440 / recommended $385 |
 
 ### Future CRS link
