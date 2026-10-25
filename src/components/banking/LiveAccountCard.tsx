@@ -127,7 +127,7 @@ export function LiveAccountCard() {
           onClick={() => setOpenForm(openForm === "deposit" ? null : "deposit")}
         />
         <ActionToggle
-          label="Transaction"
+          label="Withdraw"
           icon={<ArrowUpRight className="w-3.5 h-3.5" />}
           active={openForm === "withdrawal"}
           onClick={() => setOpenForm(openForm === "withdrawal" ? null : "withdrawal")}
