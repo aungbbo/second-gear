@@ -4,12 +4,14 @@ import { postDeposit, postWithdrawal, readAccountsView } from "@/lib/nessie/acti
 import { NessieError } from "@/lib/nessie/errors";
 import { __resetMockNessieWritesForTests } from "@/lib/nessie/mock-store";
 import type { NessieSnapshot } from "@/lib/nessie/types";
+import { __resetLiveWriteOrderForTests } from "@/lib/nessie/write-order";
 import { API_KEY, BASE_URL, CUSTOMER_ID, baselineRoutes } from "./fixtures";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   __resetMockNessieWritesForTests();
+  __resetLiveWriteOrderForTests();
 });
 
 function snapshot(): NessieSnapshot {

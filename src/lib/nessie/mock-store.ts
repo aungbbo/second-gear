@@ -22,13 +22,14 @@ interface MockWrites {
   deposits: MockTransactionWrite[];
   withdrawals: MockTransactionWrite[];
   transfers: MockTransactionWrite[];
+  purchases: MockTransactionWrite[];
   bills: MockBillWrite[];
 }
 
 const state = globalThis as typeof globalThis & { __secondGearMockNessieWrites?: MockWrites };
 
 function store(): MockWrites {
-  return (state.__secondGearMockNessieWrites ??= { deposits: [], withdrawals: [], transfers: [], bills: [] });
+  return (state.__secondGearMockNessieWrites ??= { deposits: [], withdrawals: [], transfers: [], purchases: [], bills: [] });
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -43,6 +44,10 @@ export function addMockWithdrawal(amount: number, description: string): void {
 
 export function addMockTransfer(amount: number, description: string): void {
   store().transfers.push({ amount, description, date: todayIso() });
+}
+
+export function addMockPurchase(amount: number, description: string): void {
+  store().purchases.push({ amount, description, date: todayIso() });
 }
 
 export function addMockBill(amount: number, nickname: string, payee: string, dayOfMonth: number): void {

@@ -1,40 +1,74 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Landmark, Plus, ArrowDownLeft, ArrowUpRight, ArrowRightLeft, Repeat, Loader2 } from "lucide-react";
+import {
+  Landmark,
+  Plus,
+  ArrowDownLeft,
+  ArrowUpRight,
+  ArrowRightLeft,
+  Repeat,
+  CreditCard,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import type { AccountsView } from "@/lib/nessie/account-view";
+import type { AccountsView, AccountSummaryView, BillView, TransactionView } from "@/lib/nessie/account-view";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; data: AccountsView };
 
-type FormKind = "deposit" | "withdrawal" | "transfer" | "bill" | null;
+type FormKind = "deposit" | "withdrawal" | "transfer" | "bill" | "purchase" | null;
 
 const ACTION_PATHS: Record<Exclude<FormKind, null>, string> = {
   deposit: "/api/nessie/accounts/deposit",
   withdrawal: "/api/nessie/accounts/withdrawal",
   transfer: "/api/nessie/accounts/transfer",
   bill: "/api/nessie/accounts/bill",
+  purchase: "/api/nessie/accounts/purchase",
 };
 
-const TRANSACTION_LIMIT = 8;
+const PAGE_SIZE = 8;
+
+/**
+ * Page numbers to show around `current` (0-indexed), collapsing runs into a
+ * single "…" so the control stays a fixed width instead of listing every
+ * page — always the first, the last, `current`, and its immediate
+ * neighbors.
+ */
+function pageItems(current: number, total: number): (number | "…")[] {
+  const keep = new Set([0, total - 1, current - 1, current, current + 1].filter((p) => p >= 0 && p < total));
+  const sorted = Array.from(keep).sort((a, b) => a - b);
+  const items: (number | "…")[] = [];
+  sorted.forEach((page, i) => {
+    if (i > 0 && page - sorted[i - 1] > 1) items.push("…");
+    items.push(page);
+  });
+  return items;
+}
 
 const usd = (n: number) => n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
-export function LiveAccountCard() {
+type AccountKind = "checking" | "savings" | "card";
+
+export function LiveAccountCard({ onData }: { onData?: (data: AccountsView) => void }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [openForm, setOpenForm] = useState<FormKind>(null);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<AccountKind>("checking");
 
   async function load() {
     try {
       const res = await fetch("/api/nessie/accounts");
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "Couldn't load account data.");
-      setState({ status: "ready", data: body as AccountsView });
+      const data = body as AccountsView;
+      setState({ status: "ready", data });
+      onData?.(data);
     } catch (err) {
       setState({ status: "error", message: err instanceof Error ? err.message : "Couldn't load account data." });
     }
@@ -44,6 +78,7 @@ export function LiveAccountCard() {
     // One-time fetch on mount, not a sync with external state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function submit(kind: Exclude<FormKind, null>, payload: Record<string, unknown>) {
@@ -57,7 +92,9 @@ export function LiveAccountCard() {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error ?? "That didn't go through. Try again.");
-      setState({ status: "ready", data: body as AccountsView });
+      const data = body as AccountsView;
+      setState({ status: "ready", data });
+      onData?.(data);
       setOpenForm(null);
     } catch (err) {
       setFormError(err instanceof Error ? err.message : "That didn't go through. Try again.");
@@ -83,7 +120,13 @@ export function LiveAccountCard() {
   }
 
   const { data } = state;
-  const shown = data.transactions.slice(0, TRANSACTION_LIMIT);
+  // Total balance is cash on hand only — the card's balance is money owed,
+  // not something to add to checking + savings (see account-view.ts).
+  const checking = data.accounts.find((a) => a.type === "Checking");
+  const savings = data.accounts.find((a) => a.type === "Savings");
+  const creditCard = data.accounts.find((a) => a.type === "Credit Card");
+  const transactionsFor = (nickname: string | undefined) =>
+    nickname ? data.transactions.filter((t) => t.account === nickname) : [];
 
   return (
     <div className="bg-card border border-line rounded-2xl p-6">
@@ -92,12 +135,7 @@ export function LiveAccountCard() {
           <span className="w-9 h-9 rounded-lg bg-teal-paper flex items-center justify-center shrink-0">
             <Landmark className="w-4.5 h-4.5 text-teal-deep" />
           </span>
-          <div>
-            <p className="font-medium">Live account</p>
-            <p className="text-xs text-ink-soft">
-              {data.accounts.map((a) => a.nickname).join(" · ") || "No accounts"}
-            </p>
-          </div>
+          <p className="font-medium">Live account</p>
         </div>
         {data.source === "live" && (
           <span className="text-xs font-medium px-2 py-1 rounded-full shrink-0 bg-teal-paper text-teal-deep">
@@ -108,47 +146,151 @@ export function LiveAccountCard() {
 
       <p className="mt-5 text-xs text-ink-soft">Total balance</p>
       <p className="font-display font-extrabold text-3xl tabular">${usd(data.totalBalance)}</p>
-      <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-soft">
-        {data.accounts.map((a) => (
-          <span key={a.nickname} className="tabular">
-            {a.nickname}{" "}
-            <span className="text-ink font-medium">
-              {a.type === "Credit Card" ? `$${usd(a.balance)} owed` : `$${usd(a.balance)}`}
-            </span>
-          </span>
-        ))}
+
+      <div className="mt-5 inline-flex rounded-full border border-line p-1 gap-1">
+        <AccountTab
+          label={checking?.nickname ?? "Checking"}
+          active={selected === "checking"}
+          onClick={() => {
+            setSelected("checking");
+            setOpenForm(null);
+          }}
+        />
+        <AccountTab
+          label={savings?.nickname ?? "Savings"}
+          active={selected === "savings"}
+          onClick={() => {
+            setSelected("savings");
+            setOpenForm(null);
+          }}
+        />
+        {creditCard && (
+          <AccountTab
+            label={creditCard.nickname}
+            active={selected === "card"}
+            onClick={() => {
+              setSelected("card");
+              setOpenForm(null);
+            }}
+          />
+        )}
+      </div>
+
+      <div className="mt-5">
+        {selected === "checking" && (
+          <AccountPanel
+            account={checking}
+            transactions={transactionsFor(checking?.nickname)}
+            bills={data.bills}
+            actions={["deposit", "withdrawal", "transfer", "bill"]}
+            openForm={openForm}
+            setOpenForm={setOpenForm}
+            submitting={submitting}
+            formError={formError}
+            onSubmit={submit}
+          />
+        )}
+        {selected === "savings" && (
+          <AccountPanel
+            account={savings}
+            transactions={transactionsFor(savings?.nickname)}
+            actions={[]}
+            openForm={openForm}
+            setOpenForm={setOpenForm}
+            submitting={submitting}
+            formError={formError}
+            onSubmit={submit}
+          />
+        )}
+        {selected === "card" && (
+          <AccountPanel
+            account={creditCard}
+            transactions={transactionsFor(creditCard?.nickname)}
+            actions={["purchase"]}
+            openForm={openForm}
+            setOpenForm={setOpenForm}
+            submitting={submitting}
+            formError={formError}
+            onSubmit={submit}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AccountTab({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-sm font-medium px-3.5 py-1.5 rounded-full transition-colors ${
+        active ? "bg-teal-paper text-teal-deep" : "text-ink-soft hover:text-ink"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+const ACTION_META: Record<Exclude<FormKind, null>, { label: string; icon: React.ReactNode }> = {
+  deposit: { label: "Deposit", icon: <ArrowDownLeft className="w-3.5 h-3.5" /> },
+  withdrawal: { label: "Withdraw", icon: <ArrowUpRight className="w-3.5 h-3.5" /> },
+  transfer: { label: "Transfer to savings", icon: <ArrowRightLeft className="w-3.5 h-3.5" /> },
+  bill: { label: "Recurring bill", icon: <Repeat className="w-3.5 h-3.5" /> },
+  purchase: { label: "Use card", icon: <CreditCard className="w-3.5 h-3.5" /> },
+};
+
+function AccountPanel({
+  account,
+  transactions,
+  bills,
+  actions,
+  openForm,
+  setOpenForm,
+  submitting,
+  formError,
+  onSubmit,
+}: {
+  account: AccountSummaryView | undefined;
+  transactions: TransactionView[];
+  bills?: BillView[];
+  actions: Exclude<FormKind, null>[];
+  openForm: FormKind;
+  setOpenForm: (k: FormKind) => void;
+  submitting: boolean;
+  formError: string | null;
+  onSubmit: (kind: Exclude<FormKind, null>, payload: Record<string, unknown>) => void;
+}) {
+  const [page, setPage] = useState(0);
+  if (!account) return null;
+  const activeForm = openForm && actions.includes(openForm) ? openForm : null;
+  const totalPages = Math.max(1, Math.ceil(transactions.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const shown = transactions.slice(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE);
+
+  return (
+    <div className="bg-paper-raised rounded-xl p-5">
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="font-medium">{account.nickname}</p>
+        <p className="font-display font-bold text-2xl tabular">${usd(account.balance)}</p>
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <ActionToggle
-          label="Deposit"
-          icon={<ArrowDownLeft className="w-3.5 h-3.5" />}
-          active={openForm === "deposit"}
-          onClick={() => setOpenForm(openForm === "deposit" ? null : "deposit")}
-        />
-        <ActionToggle
-          label="Withdraw"
-          icon={<ArrowUpRight className="w-3.5 h-3.5" />}
-          active={openForm === "withdrawal"}
-          onClick={() => setOpenForm(openForm === "withdrawal" ? null : "withdrawal")}
-        />
-        <ActionToggle
-          label="Transfer to savings"
-          icon={<ArrowRightLeft className="w-3.5 h-3.5" />}
-          active={openForm === "transfer"}
-          onClick={() => setOpenForm(openForm === "transfer" ? null : "transfer")}
-        />
-        <ActionToggle
-          label="Recurring bill"
-          icon={<Repeat className="w-3.5 h-3.5" />}
-          active={openForm === "bill"}
-          onClick={() => setOpenForm(openForm === "bill" ? null : "bill")}
-        />
+        {actions.map((kind) => (
+          <ActionToggle
+            key={kind}
+            label={ACTION_META[kind].label}
+            icon={ACTION_META[kind].icon}
+            active={openForm === kind}
+            onClick={() => setOpenForm(openForm === kind ? null : kind)}
+          />
+        ))}
       </div>
 
-      {openForm && (
-        <div className="mt-4 bg-paper-raised rounded-xl p-4">
-          {openForm === "deposit" && (
+      {activeForm && (
+        <div className="mt-4 bg-card rounded-xl p-4">
+          {activeForm === "deposit" && (
             <TransactionForm
               submitLabel="Add deposit"
               submitting={submitting}
@@ -156,10 +298,10 @@ export function LiveAccountCard() {
               descriptionLabel="Source"
               descriptionPlaceholder="Payroll, rideshare, gift…"
               onCancel={() => setOpenForm(null)}
-              onSubmit={(amount, description) => submit("deposit", { amount, description })}
+              onSubmit={(amount, description) => onSubmit("deposit", { amount, description })}
             />
           )}
-          {openForm === "withdrawal" && (
+          {activeForm === "withdrawal" && (
             <TransactionForm
               submitLabel="Add transaction"
               submitting={submitting}
@@ -167,10 +309,10 @@ export function LiveAccountCard() {
               descriptionLabel="What for"
               descriptionPlaceholder="Groceries, gas, ATM…"
               onCancel={() => setOpenForm(null)}
-              onSubmit={(amount, description) => submit("withdrawal", { amount, description })}
+              onSubmit={(amount, description) => onSubmit("withdrawal", { amount, description })}
             />
           )}
-          {openForm === "transfer" && (
+          {activeForm === "transfer" && (
             <TransactionForm
               submitLabel="Transfer to savings"
               submitting={submitting}
@@ -179,43 +321,94 @@ export function LiveAccountCard() {
               descriptionPlaceholder="Emergency fund, down payment…"
               caption="Checking → Savings"
               onCancel={() => setOpenForm(null)}
-              onSubmit={(amount, description) => submit("transfer", { amount, description })}
+              onSubmit={(amount, description) => onSubmit("transfer", { amount, description })}
             />
           )}
-          {openForm === "bill" && (
+          {activeForm === "purchase" && (
+            <TransactionForm
+              submitLabel="Use card"
+              submitting={submitting}
+              error={formError}
+              descriptionLabel="What for"
+              descriptionPlaceholder="Streaming, shopping, dining…"
+              onCancel={() => setOpenForm(null)}
+              onSubmit={(amount, description) => onSubmit("purchase", { amount, description })}
+            />
+          )}
+          {activeForm === "bill" && (
             <BillForm
               submitting={submitting}
               error={formError}
               onCancel={() => setOpenForm(null)}
               onSubmit={(amount, nickname, payee, dayOfMonth) =>
-                submit("bill", { amount, nickname, payee, dayOfMonth })
+                onSubmit("bill", { amount, nickname, payee, dayOfMonth })
               }
             />
           )}
         </div>
       )}
 
-      <div className="mt-6 grid sm:grid-cols-2 gap-5">
-        <div>
-          <p className="text-xs font-medium text-ink-soft uppercase tracking-wide">Recent activity</p>
-          <div className="mt-2 border-t border-line">
-            {shown.map((t, i) => (
-              <div key={i} className="py-2.5 border-b border-line flex items-center gap-3">
-                <span className="text-xs text-ink-soft w-16 shrink-0 tabular">{t.date || "—"}</span>
-                <span className="flex-1 min-w-0 text-sm truncate">{t.description}</span>
-                <span className={`tabular text-sm font-medium shrink-0 ${t.direction === "in" ? "text-teal" : "text-ink"}`}>
-                  {t.direction === "in" ? "+" : "−"}${usd(t.amount)}
-                </span>
-              </div>
-            ))}
-            {shown.length === 0 && <p className="py-3 text-sm text-ink-soft">No activity yet.</p>}
+      <p className="mt-5 text-xs font-medium text-ink-soft uppercase tracking-wide">Recent activity</p>
+      <div className="mt-2 border-t border-line">
+        {shown.map((t, i) => (
+          <div key={i} className="py-2.5 border-b border-line flex items-center gap-5">
+            <span className="text-xs text-ink-soft w-20 shrink-0 tabular whitespace-nowrap">{t.date || "—"}</span>
+            <span className="flex-1 min-w-0 text-sm truncate">{t.description}</span>
+            <span className={`tabular text-sm font-medium shrink-0 ${t.direction === "in" ? "text-teal" : "text-ink"}`}>
+              {t.direction === "in" ? "+" : "−"}${usd(t.amount)}
+            </span>
           </div>
-        </div>
+        ))}
+        {transactions.length === 0 && <p className="py-3 text-sm text-ink-soft">No activity yet.</p>}
+      </div>
 
-        <div>
-          <p className="text-xs font-medium text-ink-soft uppercase tracking-wide">Recurring bills</p>
+      {totalPages > 1 && (
+        <div className="mt-3 flex items-center justify-end gap-1.5">
+          <button
+            type="button"
+            onClick={() => setPage(Math.max(currentPage - 1, 0))}
+            disabled={currentPage === 0}
+            aria-label="Previous page"
+            className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-ink-soft hover:text-ink disabled:opacity-30 disabled:hover:text-ink-soft transition-colors"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          {pageItems(currentPage, totalPages).map((item, i) =>
+            item === "…" ? (
+              <span key={`ellipsis-${i}`} className="w-7 h-7 shrink-0 flex items-center justify-center text-xs text-ink-soft">
+                …
+              </span>
+            ) : (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setPage(item)}
+                aria-current={item === currentPage ? "page" : undefined}
+                className={`w-7 h-7 shrink-0 rounded-full text-xs font-medium transition-colors ${
+                  item === currentPage ? "bg-teal-paper text-teal-deep" : "text-ink-soft hover:text-ink"
+                }`}
+              >
+                {item + 1}
+              </button>
+            ),
+          )}
+          <button
+            type="button"
+            onClick={() => setPage(Math.min(currentPage + 1, totalPages - 1))}
+            disabled={currentPage === totalPages - 1}
+            aria-label="Next page"
+            className="w-7 h-7 shrink-0 rounded-full flex items-center justify-center text-ink-soft hover:text-ink disabled:opacity-30 disabled:hover:text-ink-soft transition-colors"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {bills && (
+        <>
+          <p className="mt-5 text-xs font-medium text-ink-soft uppercase tracking-wide">Recurring bills</p>
           <div className="mt-2 border-t border-line">
-            {data.bills.map((b, i) => (
+            {bills.map((b, i) => (
               <div key={i} className="py-2.5 border-b border-line flex items-center justify-between">
                 <div>
                   <p className="text-sm">{b.label}</p>
@@ -224,10 +417,10 @@ export function LiveAccountCard() {
                 <span className="tabular text-sm font-medium">${usd(b.amount)}</span>
               </div>
             ))}
-            {data.bills.length === 0 && <p className="py-3 text-sm text-ink-soft">No recurring bills.</p>}
+            {bills.length === 0 && <p className="py-3 text-sm text-ink-soft">No recurring bills.</p>}
           </div>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 }
