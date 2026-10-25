@@ -1,6 +1,18 @@
 import type { LoanScenario } from "@/lib/types";
 
 export const LOAN_TERMS_MONTHS = [36, 48, 60, 72] as const;
+type LoanTermMonths = (typeof LOAN_TERMS_MONTHS)[number];
+
+/**
+ * Planning estimate for the additional term risk priced into longer loans.
+ * These are percentage-point adjustments, not lender-specific rate quotes.
+ */
+export const TERM_APR_ADJUSTMENTS: Record<LoanTermMonths, number> = {
+  36: 0,
+  48: 0.25,
+  60: 0.75,
+  72: 1.5,
+};
 
 /** Standard amortizing monthly payment. */
 export function monthlyPayment(principal: number, annualAprPercent: number, termMonths: number): number {
@@ -55,11 +67,21 @@ export function countNegativeEquityMonths(
   return months;
 }
 
-/** Uses the score band's average used-car APR; the supplied chart has no term-specific rates. */
-export function aprForTerm(baseAprMin: number, baseAprMax: number, _termMonths: number): number {
-  void _termMonths;
+/**
+ * Uses the score band's average used-car APR plus a transparent term adjustment.
+ * The score-band APR is an application estimate; the supplied source has no
+ * term-specific rates, so these adjustments are conservative planning heuristics.
+ * A zero APR remains zero for promotional/no-interest scenarios.
+ */
+export function aprForTerm(baseAprMin: number, baseAprMax: number, termMonths: number): number {
   const base = (baseAprMin + baseAprMax) / 2;
-  return Math.round(base * 100) / 100;
+  const adjustment = TERM_APR_ADJUSTMENTS[termMonths as LoanTermMonths];
+  if (adjustment === undefined) {
+    throw new RangeError(`Unsupported loan term: ${termMonths}`);
+  }
+  if (base === 0) return 0;
+
+  return Math.round((base + adjustment) * 100) / 100;
 }
 
 export function buildLoanScenario(

@@ -90,6 +90,16 @@ describe("loan calculations", () => {
     expect(scenario.totalFinancingCost).toBe(12_000);
   });
 
+  it("raises the estimated APR as the loan term gets longer", () => {
+    const scenarios = buildAllScenarios(15_000, 1_000, 19.1, 19.1, 600);
+
+    expect(scenarios.map((scenario) => scenario.apr)).toEqual([19.1, 19.35, 19.85, 20.6]);
+    expect(scenarios[0].apr).toBeLessThan(scenarios[1].apr);
+    expect(scenarios[1].apr).toBeLessThan(scenarios[2].apr);
+    expect(scenarios[2].apr).toBeLessThan(scenarios[3].apr);
+    expect(scenarios[0].totalInterest).toBeLessThan(scenarios[3].totalInterest);
+  });
+
   it("calculates all required loan terms and 36-month equity exposure", () => {
     const scenarios = buildAllScenarios(15_000, 1_000, 18, 24, 600);
     expect(scenarios.map((scenario) => scenario.termMonths)).toEqual([36, 48, 60, 72]);
