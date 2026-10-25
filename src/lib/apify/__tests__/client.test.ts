@@ -3,9 +3,9 @@ import { runListingsActor } from "@/lib/apify/client";
 import { ApifyError, scrubDetail } from "@/lib/apify/errors";
 import { buildSearchInput } from "@/lib/apify/search";
 import { fakeApify } from "./fake-apify";
-import { AFFORDABILITY, autotraderItem, CREDIT, LIVE_CFG, NEED, TEST_TOKEN } from "./fixtures";
+import { carsComItem, CONSTRAINTS, LIVE_CFG, NEED, PLAN, TEST_TOKEN } from "./fixtures";
 
-const INPUT = buildSearchInput(NEED, AFFORDABILITY, CREDIT, LIVE_CFG);
+const INPUT = buildSearchInput({ need: NEED, constraints: CONSTRAINTS, plan: PLAN }, LIVE_CFG);
 
 async function failure(promise: Promise<unknown>): Promise<ApifyError> {
   try {
@@ -31,13 +31,13 @@ afterEach(() => {
 
 describe("runListingsActor", () => {
   it("starts a capped run, then reads its dataset; the token only in the header", async () => {
-    const { calls } = fakeApify({ items: [autotraderItem()] });
+    const { calls } = fakeApify({ items: [carsComItem()] });
 
     const result = await runListingsActor(LIVE_CFG, INPUT);
 
-    expect(result).toEqual({ items: [autotraderItem()], partial: false, status: "SUCCEEDED" });
+    expect(result).toEqual({ items: [carsComItem()], partial: false, status: "SUCCEEDED" });
     expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
-      "POST /acts/caffein.dev~autotrader-com-actor/runs",
+      "POST /acts/skootle~cars-com-scraper/runs",
       "GET /datasets/ds1/items",
     ]);
     const start = new URL(calls[0].url);
@@ -56,7 +56,7 @@ describe("runListingsActor", () => {
   });
 
   it("polls a running run until it finishes", async () => {
-    const { calls } = fakeApify({ statuses: ["RUNNING", "RUNNING", "SUCCEEDED"], items: [autotraderItem()] });
+    const { calls } = fakeApify({ statuses: ["RUNNING", "RUNNING", "SUCCEEDED"], items: [carsComItem()] });
 
     const result = await runListingsActor(LIVE_CFG, INPUT);
 
@@ -66,7 +66,7 @@ describe("runListingsActor", () => {
   });
 
   it("returns partial items when Apify's own run timeout hits", async () => {
-    fakeApify({ statuses: ["RUNNING", "TIMED-OUT"], items: [autotraderItem()] });
+    fakeApify({ statuses: ["RUNNING", "TIMED-OUT"], items: [carsComItem()] });
     const result = await runListingsActor(LIVE_CFG, INPUT);
     expect(result).toMatchObject({ partial: true, status: "TIMED-OUT" });
     expect(result.items).toHaveLength(1);
@@ -74,7 +74,7 @@ describe("runListingsActor", () => {
 
   it("aborts a run still going at the deadline, which stops charges, and keeps what it collected", async () => {
     fastClock(30_000);
-    const { calls } = fakeApify({ statuses: ["RUNNING"], items: [autotraderItem()] });
+    const { calls } = fakeApify({ statuses: ["RUNNING"], items: [carsComItem()] });
 
     const result = await runListingsActor(LIVE_CFG, INPUT);
 
@@ -87,7 +87,7 @@ describe("runListingsActor", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     fakeApify({
       statuses: ["RUNNING"],
-      items: [autotraderItem()],
+      items: [carsComItem()],
       override: (method, path) => (path.endsWith("/abort") ? new Response("{}", { status: 500 }) : undefined),
     });
     expect((await runListingsActor(LIVE_CFG, INPUT)).partial).toBe(true);
@@ -101,10 +101,10 @@ describe("runListingsActor", () => {
   });
 
   it("fails with upstream when the run failed or someone else aborted it", async () => {
-    fakeApify({ statuses: ["FAILED"], items: [autotraderItem()] });
+    fakeApify({ statuses: ["FAILED"], items: [carsComItem()] });
     expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("upstream");
 
-    fakeApify({ statuses: ["RUNNING", "ABORTED"], items: [autotraderItem()] });
+    fakeApify({ statuses: ["RUNNING", "ABORTED"], items: [carsComItem()] });
     expect((await failure(runListingsActor(LIVE_CFG, INPUT))).kind).toBe("upstream");
   });
 

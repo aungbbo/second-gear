@@ -225,3 +225,51 @@ describe("seed dataset shape", () => {
     expect(keyOrIdShaped.test(text)).toBe(false);
   });
 });
+
+describe("generated personas", () => {
+  const PERSONAS = ["sg-demo-subprime-03", "sg-demo-subprime-04", "sg-demo-alt-a", "sg-demo-alt-b", "sg-demo-alt-c"];
+
+  it.each(PERSONAS)("%s differs from the verified persona but keeps its shape", (personaId) => {
+    const generated = buildSeedDataset({ asOf: AS_OF, personaId });
+    expect(generated.persona).toBe(personaId);
+    expect(generated.deposits).toHaveLength(9);
+    expect(generated.withdrawals).toHaveLength(6);
+    expect(generated.bills).toHaveLength(2);
+    expect(generated.loans).toHaveLength(1);
+    expect(generated.deposits.map((r) => r.body.amount)).not.toEqual(dataset.deposits.map((r) => r.body.amount));
+  });
+
+  it.each(PERSONAS)("%s reads as low-volatility income with clean records", (personaId) => {
+    const generated = buildSeedDataset({ asOf: AS_OF, personaId });
+    const { result, stats } = analyzeSnapshotWithStats(seedSnapshot(generated), { ...NEED, maxMonthlyPayment: 400 }, AS_OF_NOON);
+    expect(result.incomeVolatility).toBe("low");
+    expect(result.existingDebtPayments).toBeGreaterThan(0);
+    expect(stats).toEqual({ malformed: 0, invalidDates: 0, duplicates: 0 });
+  });
+
+  it.each(PERSONAS)("%s keeps every record 1–85 days old and never double counts a bill or the loan", (personaId) => {
+    const generated = buildSeedDataset({ asOf: AS_OF, personaId });
+    const dates = [
+      ...generated.deposits.map((r) => r.body.transaction_date),
+      ...generated.withdrawals.map((r) => r.body.transaction_date),
+      ...generated.purchases.map((r) => r.body.purchase_date),
+      ...generated.bills.map((r) => r.body.payment_date),
+    ];
+    for (const date of dates) {
+      const ageDays = (AS_OF_NOON.getTime() - parseNessieDate(date)!) / DAY_MS;
+      expect(ageDays).toBeGreaterThanOrEqual(1);
+      expect(ageDays).toBeLessThanOrEqual(85);
+    }
+    const billOrLoan = new Set([...generated.bills.map((r) => r.body.payment_amount), ...generated.loans.map((r) => r.body.monthly_payment)]);
+    for (const { body } of generated.withdrawals) expect(billOrLoan.has(body.amount)).toBe(false);
+  });
+
+  it.each(PERSONAS)("%s is deterministic and only its dates move with asOf", (personaId) => {
+    const generated = buildSeedDataset({ asOf: AS_OF, personaId });
+    expect(buildSeedDataset({ asOf: AS_OF, personaId })).toEqual(generated);
+    const later = buildSeedDataset({ asOf: isoDay(AS_OF, -7), personaId });
+    expect(later.deposits.map((r) => r.body.amount)).toEqual(generated.deposits.map((r) => r.body.amount));
+    expect(later.deposits.map((r) => r.body.transaction_date)).toEqual(generated.deposits.map((r) => isoDay(r.body.transaction_date, -7)));
+    expect(later.purchases.map((r) => r.body.purchase_date)).toEqual(generated.purchases.map((r) => isoDay(r.body.purchase_date, -7)));
+  });
+});

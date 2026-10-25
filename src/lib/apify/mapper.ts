@@ -1,5 +1,6 @@
-import type { AutotraderListingItem } from "@/lib/apify/types";
+import type { CarsComListingItem } from "@/lib/apify/types";
 import { CAR_CATALOG } from "@/lib/catalog";
+import { matchesBodyStyle, matchesFuelType, type PlanBodyStyle, type PlanFuelType } from "@/lib/search-plan";
 import type { CarListing } from "@/lib/types";
 
 /** Neutral score for models the catalog doesn't rate; it neither helps nor hurts ranking. */
@@ -10,8 +11,8 @@ export interface MapStats {
   mapped: number;
   /** Missing an id, year, make, model, price, mileage, or seller location. */
   incomplete: number;
-  /** New-car or unrecognised listing types; the app compares used and certified pre-owned cars only. */
-  notUsed: number;
+  /** Below the minimum price, or not the body style or fuel type the plan asked for. */
+  filtered: number;
   /** No MPG from the listing or the catalog, so it can't be ranked honestly. */
   noMpg: number;
   duplicates: number;
@@ -38,26 +39,16 @@ export function combinedMpg(city: number | undefined, highway: number | undefine
   return c ? Math.round(c) : undefined;
 }
 
-/** Listing types AutoTrader uses for used cars: plain used, manufacturer CPO, third-party certified. */
-const USED_TYPES = new Set(["USED", "CERTIFIED", "3P_CERT"]);
+const LISTING_HOSTS = ["cars.com"];
 
-/**
- * Used or certified pre-owned only. A missing type falls back to the title
- * prefix AutoTrader uses ("Used …", "Certified …", "New …").
- */
-export function isUsedListing(listingType: string | undefined, title: string | undefined): boolean {
-  if (listingType) return USED_TYPES.has(listingType.toUpperCase());
-  return !/^new\b/i.test(title ?? "");
-}
-
-/** Only an https link to AutoTrader itself is passed to the browser. */
+/** Only an https link to Cars.com itself is passed to the browser. */
 export function safeListingUrl(value: unknown): string | undefined {
   const raw = str(value);
   if (!raw) return undefined;
   try {
     const url = new URL(raw);
     const host = url.hostname.toLowerCase();
-    if (url.protocol !== "https:" || !(host === "autotrader.com" || host.endsWith(".autotrader.com"))) return undefined;
+    if (url.protocol !== "https:" || !LISTING_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) return undefined;
     url.username = "";
     url.password = "";
     return url.toString();
@@ -82,40 +73,65 @@ export function hueFor(id: string): number {
   return h % 360;
 }
 
-const CURRENT_YEAR = new Date().getFullYear();
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole days since `listedAt`; undefined when missing, unparsable, or in the future. */
+export function daysSince(listedAt: string | undefined, now: number): number | undefined {
+  if (!listedAt) return undefined;
+  const at = Date.parse(listedAt);
+  if (!Number.isFinite(at) || at > now) return undefined;
+  return Math.floor((now - at) / DAY_MS);
+}
+
+export interface MapOptions {
+  /** Drops listings priced below this. */
+  minPrice?: number;
+  bodyStyles?: readonly PlanBodyStyle[];
+  fuelTypes?: readonly PlanFuelType[];
+  /** Clock for `daysOnMarket`; tests pin it. */
+  now?: number;
+}
 
 /**
  * Maps the Actor's dataset to `CarListing`. A field the app can't do without
  * drops the item rather than being guessed; the counts say why.
  */
-export function mapListings(items: unknown[]): { listings: CarListing[]; stats: MapStats } {
-  const stats: MapStats = { received: items.length, mapped: 0, incomplete: 0, notUsed: 0, noMpg: 0, duplicates: 0 };
+export function mapListings(items: unknown[], options: MapOptions = {}): { listings: CarListing[]; stats: MapStats } {
+  const now = options.now ?? Date.now();
+  const currentYear = new Date(now).getFullYear();
+  const stats: MapStats = { received: items.length, mapped: 0, incomplete: 0, filtered: 0, noMpg: 0, duplicates: 0 };
   const listings: CarListing[] = [];
   const seenIds = new Set<string>();
   const seenVins = new Set<string>();
 
   for (const raw of items) {
-    const item = (raw && typeof raw === "object" ? raw : {}) as AutotraderListingItem;
+    const item = (raw && typeof raw === "object" ? raw : {}) as CarsComListingItem;
+    const dealer: NonNullable<CarsComListingItem["dealer"]> = item.dealer && typeof item.dealer === "object" ? item.dealer : {};
     const listingId = str(item.listingId) ?? (num(item.listingId) !== undefined ? String(item.listingId) : undefined);
     const year = num(item.year);
     const make = str(item.make);
     const model = str(item.model);
-    const price = num(item.salePrice);
-    const mileage = num(item.mileage);
-    const city = str(item.sellerCity);
-    const state = str(item.sellerState);
+    const price = num(item.priceUsd);
+    const mileage = num(item.mileageMiles);
+    const city = str(dealer.city);
+    const state = str(dealer.state);
 
     if (
       !listingId || !make || !model || !city || !state ||
-      year === undefined || !Number.isInteger(year) || year < 1990 || year > CURRENT_YEAR + 1 ||
+      year === undefined || !Number.isInteger(year) || year < 1990 || year > currentYear + 1 ||
       price === undefined || price <= 0 ||
       mileage === undefined || mileage < 0
     ) {
       stats.incomplete++;
       continue;
     }
-    if (!isUsedListing(str(item.listingType), str(item.title))) {
-      stats.notUsed++;
+    const bodyStyle = str(item.bodyStyle) ?? catalogEntry(make, model)?.bodyStyle;
+    if (
+      price < (options.minPrice ?? 0) ||
+      !matchesBodyStyle(bodyStyle, options.bodyStyles ?? []) ||
+      !matchesFuelType(str(item.fuelType), options.fuelTypes ?? [])
+    ) {
+      stats.filtered++;
       continue;
     }
 
@@ -133,22 +149,22 @@ export function mapListings(items: unknown[]): { listings: CarListing[]; stats: 
     seenIds.add(listingId);
     if (vin) seenVins.add(vin);
 
-    const days = num(item.daysOnSite);
-    const listingUrl = safeListingUrl(item.url);
+    const days = daysSince(str(item.listedAt), now);
+    const listingUrl = safeListingUrl(item.listingUrl);
     listings.push({
-      id: `at_${listingId}`,
+      id: `cc_${listingId}`,
       year,
       make,
       model,
       trim: str(item.trim) ?? "",
-      bodyStyle: str(item.bodyStyle) ?? catalogEntry(make, model)?.bodyStyle ?? "Vehicle",
+      bodyStyle: bodyStyle ?? "Vehicle",
       price: Math.round(price),
       mileage: Math.round(mileage),
-      dealerName: str(item.sellerName) ?? "Private seller",
+      dealerName: str(dealer.name) ?? "Private seller",
       city,
       state,
       // Unknown age counts as fresh, which keeps the walk-away margin at its most conservative.
-      daysOnMarket: days !== undefined && days >= 0 ? Math.round(days) : 0,
+      daysOnMarket: days ?? 0,
       mpgCombined: mpg,
       reliabilityScore: reliabilityFor(make, model),
       vin,

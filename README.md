@@ -4,33 +4,9 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 
 ## Product workflow
 
-```mermaid
-%%{init: {"htmlLabels": true, "flowchart": {"nodeSpacing": 60, "rankSpacing": 70, "wrappingWidth": 180, "minNodeWidth": 220, "padding": 20}, "themeVariables": {"fontSize": "16px"}}}%%
-flowchart TD
-    A["Buyer<br/>Next.js UI<br/>Request +<br/>consent"]
-    B["CRS credit<br/>API<br/>Credit profile<br/>Estimated APR"]
-    C["Capital One<br/>Nessie<br/>Income + debt<br/>Expenses"]
-    D["Affordability<br/>engine<br/>Safe payment<br/>Max car price"]
-    E["Bitdeer AI<br/>Search<br/>Preferences<br/>+ filters"]
-    F["Apify<br/>AutoTrader<br/>Used-car<br/>listings"]
-    G["Loan +<br/>ownership<br/>Payment + cost<br/>Negative equity"]
-    H["Bitdeer AI<br/>Explain + rank<br/>Recommendations<br/>Negotiation"]
-    I["Ranked cars<br/>Dealer packet<br/>Talking points<br/>Next steps"]
-
-    A --> B
-    A --> C
-    B --> D
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    D --> G
-    G --> H
-    H --> I
-
-    classDef centered text-align:center;
-    class A,B,C,D,E,F,G,H,I centered;
-```
+<p align="center">
+  <img src="src/img/workflow.png" alt="Second Gear product workflow" height="720">
+</p>
 
 ### 1. Buyer - Next.js UI
 
@@ -83,13 +59,13 @@ Ownership costs are kept separate from the loan payment. Configurable estimates 
 
 The target Bitdeer planning step interprets the buyer's request and combines soft preferences with the deterministic financial constraints to propose structured search filters for Apify.
 
-The provider boundary is already represented in the application, but the current implementation is a deterministic mock. It must not loosen or override the affordability engine's safety limits.
+The planner returns a `VehicleSearchPlan` (make, model, body styles, fuel types, minimum year, mileage cap) through the `SearchPlanner` interface in `src/lib/search-plan/`. The current implementation is a deterministic mock that reads only what the buyer wrote; a request without a single make stops a live search with a "tell us which make" message before the credit pull. A plan has no price, ZIP, or radius fields and every plan is normalized before use, so it can only narrow the search and never loosen the affordability engine's limits. See [docs/bitdeer-search-plan.md](docs/bitdeer-search-plan.md) for the Bitdeer handoff contract.
 
-### 6. Apify AutoTrader Actor
+### 6. Apify Cars.com Actor
 
-The target Apify step retrieves used-car listings using search constraints such as location, radius, price, mileage, model year, and vehicle type.
+The Apify step retrieves used-car listings with the [`skootle/cars-com-scraper`](https://apify.com/skootle/cars-com-scraper) Actor, using the search plan plus the deterministic constraints: ZIP, radius, the assessment's maximum affordable vehicle price, mileage, and model year. When the assessment leaves no room above $3,000, no Actor run is started. A run that returns nothing is reported as inconclusive rather than "no cars for sale", and is not cached.
 
-The current provider is a seeded deterministic mock so local development and tests do not require scraping credentials or live network calls. The provider interface is designed to be replaced with an Apify Actor/API or MCP-backed implementation.
+`APIFY_MODE=mock` keeps a seeded deterministic provider for local development and tests; `APIFY_MODE=live` calls the Apify REST API with per-run spend, item, and time caps plus an hourly and daily cost guard. The runtime does not use Apify MCP. See [docs/apify-listings.md](docs/apify-listings.md).
 
 ### 7. Deterministic Loan & Ownership Calculations
 
@@ -128,8 +104,8 @@ The final result gives the buyer a shortlist, the financial reasoning behind eac
 | CRS Credit API | Implemented with mock and controlled sandbox-live modes |
 | Capital One Nessie | Implemented with mock and sandbox-live modes |
 | Affordability Engine | Implemented as deterministic TypeScript calculations |
-| Apify listings | Seeded deterministic mock; live Actor/API is a future integration |
-| Bitdeer AI | Deterministic mock provider; live AI integration is a future integration |
+| Apify listings | Implemented with mock and live modes (Cars.com Actor `skootle/cars-com-scraper`) |
+| Bitdeer AI | Deterministic mock search planner and ranking provider; live AI integration is a future integration |
 
 ## Getting started
 
@@ -148,6 +124,7 @@ For local development, keep the provider modes in `.env.local` set to mock:
 ```dotenv
 CRS_MODE=mock
 NESSIE_MODE=mock
+APIFY_MODE=mock
 CONSENT_STORE=memory
 RATE_LIMIT_MODE=memory
 ```
@@ -224,7 +201,7 @@ npx tsc --noEmit
 npx next build --webpack
 ```
 
-Tests use synthetic or seeded mock data. They must not make live CRS or Nessie requests unless a separate, explicitly approved sandbox validation is being performed.
+Tests use synthetic or seeded mock data, and a fake Apify API replaying the dataset of one real Cars.com run. They must not make live CRS, Nessie, or Apify requests unless a separate, explicitly approved sandbox validation is being performed.
 
 ## Repository structure
 
@@ -237,7 +214,9 @@ Tests use synthetic or seeded mock data. They must not make live CRS or Nessie r
 | `src/lib/nessie/` | Nessie client and cash-flow analysis |
 | `src/lib/affordability/` | Deterministic affordability engine |
 | `src/lib/calculations.ts` | Loan and vehicle calculations |
-| `src/lib/providers/apify.ts` | Listings provider boundary and mock |
+| `src/lib/providers/apify.ts` | Listings provider: mock or live Cars.com Actor run |
+| `src/lib/apify/` | Apify client, cost guard, search input, and listing mapper |
+| `src/lib/search-plan/` | `SearchPlanner` interface and mock planner (future Bitdeer handoff) |
 | `src/lib/providers/bitdeer.ts` | Ranking/explanation provider boundary and mock |
 | `docs/` | Sandbox and integration documentation |
 
@@ -247,13 +226,12 @@ Tests use synthetic or seeded mock data. They must not make live CRS or Nessie r
 - Ownership costs use configurable assumptions when buyer or vehicle-specific values are unavailable.
 - The affordability engine can return no-purchase guidance instead of forcing a minimum payment or vehicle recommendation.
 - CRS and Nessie demo personas are independent simulated identities; they must not be represented as one verified customer.
-- The Apify and Bitdeer providers are currently mocks and are not evidence of live listing or AI availability.
+- The Bitdeer providers are currently mocks and are not evidence of AI availability. Live Cars.com listings have been verified with one test run; they are a snapshot at search time and can already be sold.
 - Turbopack builds can be blocked by restricted deployment environments; the webpack production build is the supported validation path for this repository.
 
 ## Roadmap
 
-- Connect Bitdeer search planning to the `AffordableSearchConstraints` contract.
-- Replace the seeded listings provider with the Apify AutoTrader Actor/API or MCP integration.
+- Replace the mock search planner with Bitdeer AI behind the existing `SearchPlanner` interface.
 - Connect Bitdeer ranking and explanations while preserving deterministic affordability gates.
 - Add richer vehicle-specific ownership-cost inputs and frontend explanations.
 - Expand dealer-packet guidance with verified listing and financing data.

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeCars } from "@/lib/analysis";
 import { pullSoftCredit } from "@/lib/providers/crs";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
-import { searchLiveListings } from "@/lib/providers/apify";
+import { assertSearchablePlan, searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
 import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
 import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
@@ -17,6 +17,7 @@ import { enforceRateLimits, RateLimitError } from "@/lib/rate-limit";
 import { recordSecurityEvent } from "@/lib/monitoring";
 import { assessAffordability } from "@/lib/affordability/assessment";
 import { buildAffordableSearchConstraints } from "@/lib/affordability/constraints";
+import { getSearchPlanner } from "@/lib/search-plan";
 
 const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   config: 503,
@@ -46,6 +47,9 @@ const APIFY_ERROR_STATUS: Record<ApifyErrorKind, number> = {
   upstream: 502,
   invalid_response: 502,
   no_listings: 422,
+  empty_result: 503,
+  missing_make: 422,
+  no_affordable_price: 422,
   budget: 429,
 };
 
@@ -104,6 +108,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Step 0: read what the buyer is shopping for. A live search that can't
+    // start (no make) stops here, before the credit pull.
+    const plan = await getSearchPlanner()({ need });
+    assertSearchablePlan(plan);
+
     // Step 1: soft credit pull, with the verified consent.
     const credit = await pullSoftCredit(need, consent);
 
@@ -113,7 +122,7 @@ export async function POST(req: NextRequest) {
     const searchConstraints = buildAffordableSearchConstraints(need, affordabilityAssessment);
 
     // Step 3: search live listings.
-    const listings = await searchLiveListings(need, affordability, credit);
+    const listings = await searchLiveListings(need, affordability, credit, { constraints: searchConstraints, plan });
 
     // Step 4: true-cost loan comparison (plain code).
     const analyses = analyzeCars(listings, affordability, credit, need, affordabilityAssessment);
