@@ -41,8 +41,8 @@ const STEP_DEFS = [
   {
     label: "Ranking and explaining results",
     provider: "Bitdeer AI",
-    whatItDoes: "Weighs cost, risk, and fit.",
-    working: "Weighing cost, risk, and fit…",
+    whatItDoes: "Ranks the cars against your budget, credit profile, and preferences, then explains the tradeoffs.",
+    working: "Comparing the returned cars against your budget and credit profile…",
   },
 ];
 
@@ -84,14 +84,19 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
         return (await res.json()) as PipelineResult;
       });
 
-      // Advance one visible step at a time. The backend doesn't stream
-      // intermediate progress, so the live listing search remains active
-      // until the complete response is available.
-      for (let i = 0; i < 4; i++) {
+      // The pipeline endpoint returns one completed response, so these early
+      // steps are a short visual sequence. Keep the AI step active while the
+      // slower upstream work (including ranking) finishes.
+      for (let i = 0; i < 3; i++) {
         setOne(i, "active");
         await sleep(700);
-        if (i < 3) setOne(i, "done", `${STEP_DEFS[i].label} complete.`);
+        setOne(i, "done", `${STEP_DEFS[i].label} complete.`);
       }
+
+      setOne(3, "active");
+      await sleep(200);
+      setOne(3, "done", "Payment and ownership cost estimates calculated.");
+      setOne(4, "active");
 
       let data: PipelineResult;
       try {
@@ -108,10 +113,6 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
         `${data.listings.length} cars priced across 4 loan terms each`,
         `Top pick: ${data.rankedCars[0]?.listing.year} ${data.rankedCars[0]?.listing.make} ${data.rankedCars[0]?.listing.model}`,
       ];
-
-      setOne(3, "done", realNotes[3]);
-      setOne(4, "active");
-      await sleep(300);
 
       for (let i = 0; i < 5; i++) {
         setOne(i, "done", realNotes[i]);
