@@ -1,10 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { ChevronLeft, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { CarRow } from "@/components/flow/CarRow";
-import { DownPaymentWhatIf } from "@/components/flow/DownPaymentWhatIf";
 import type { PipelineResult } from "@/lib/types";
 
 interface ResultsViewProps {
@@ -13,14 +13,21 @@ interface ResultsViewProps {
   onCompare: () => void;
 }
 
-const SHOWN = 3;
+const TOP_PICKS = 3;
 
 export function ResultsView({ result, onBack, onCompare }: ResultsViewProps) {
+  const [showAllRanked, setShowAllRanked] = useState(false);
   const { credit, affordability, rankedCars, savingsHighlight, need } = result;
-  const shown = rankedCars.slice(0, SHOWN);
+  const topPicks = rankedCars.slice(0, TOP_PICKS);
+  const displayedCars = showAllRanked ? rankedCars : topPicks;
+  const rankingLabel = result.rankingSource === "bitdeer"
+    ? "Ranked by Bitdeer AI"
+    : result.rankingSource === "bitdeer_with_fallback"
+      ? "Bitdeer AI ranking · completed locally"
+      : "Local ranking fallback";
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="mx-auto w-full max-w-5xl px-4 sm:px-6">
       <div className="flex items-center justify-between">
         <button type="button" onClick={onBack} className="inline-flex items-center gap-1 text-sm text-ink-soft hover:text-ink">
           <ChevronLeft className="w-4 h-4" /> Back
@@ -30,15 +37,11 @@ export function ResultsView({ result, onBack, onCompare }: ResultsViewProps) {
       <div className="mt-6 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
           <Eyebrow icon={<Trophy className="w-3.5 h-3.5" />}>Ranked for your needs</Eyebrow>
-          <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">Your best options.</h1>
-          <p className="mt-2 text-ink-soft">
-            Needed: {need.timeframeWeeks <= 4 ? "within 1 month" : "within a few months"}. Loan target: ${need.maxMonthlyPayment}.
-          </p>
+          <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">Your best options</h1>
         </div>
         <div className="bg-card border border-line rounded-2xl px-4 py-3 shrink-0">
-          <p className="text-xs text-ink-soft">Loan payment target</p>
+          <p className="text-xs text-ink-soft">Auto payment target</p>
           <p className="font-display font-bold text-xl text-teal mt-0.5">≤ ${need.maxMonthlyPayment}/mo</p>
-          <p className="text-xs text-ink-soft mt-0.5">Uses your car and banking inputs</p>
         </div>
       </div>
 
@@ -61,9 +64,22 @@ export function ResultsView({ result, onBack, onCompare }: ResultsViewProps) {
             </div>
             <div>
               <p className="font-display font-bold text-xl tabular">
-                {credit.estimatedApr.min}–{credit.estimatedApr.max}%
+                {credit.estimatedApr.min === credit.estimatedApr.max
+                  ? `${credit.estimatedApr.min.toFixed(2)}%`
+                  : `${credit.estimatedApr.min.toFixed(2)}–${credit.estimatedApr.max.toFixed(2)}%`}
               </p>
-              <p className="text-xs text-ink-soft">estimated APR range</p>
+              <p className="flex items-center gap-1.5 text-xs text-ink-soft">
+                average APR
+                <a
+                  href="https://www.experian.com/blogs/ask-experian/average-car-loan-interest-rates-by-credit-score/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-teal-deep underline underline-offset-2 hover:text-teal"
+                  aria-label="Experian source for average auto loan interest rates by credit score (opens in a new tab)"
+                >
+                  (Experian)
+                </a>
+              </p>
             </div>
           </div>
         </div>
@@ -84,21 +100,25 @@ export function ResultsView({ result, onBack, onCompare }: ResultsViewProps) {
         </div>
       </div>
 
-      <div className="mt-10 space-y-5">
-        {shown.map((car) => (
-          <CarRow key={car.listing.id} car={car} />
-        ))}
-      </div>
-
-      {rankedCars.length > SHOWN && (
-        <p className="mt-4 text-center text-sm text-ink-soft">and {rankedCars.length - SHOWN} more options ranked below your top picks</p>
-      )}
-
-      {shown[0] && (
-        <div className="mt-8">
-          <DownPaymentWhatIf car={shown[0]} credit={credit} affordability={affordability} />
+      <div className="mt-10">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-medium text-ink-soft">{rankingLabel} · {rankedCars.length} listings</p>
+          {rankedCars.length > TOP_PICKS && (
+            <button
+              type="button"
+              onClick={() => setShowAllRanked((visible) => !visible)}
+              className="text-sm font-semibold text-teal-deep underline underline-offset-4 hover:text-teal"
+            >
+              {showAllRanked ? "Show top picks" : `Show all ${rankedCars.length} ranked listings`}
+            </button>
+          )}
         </div>
-      )}
+        <div className="mx-auto mt-4 grid w-full grid-cols-1 gap-5">
+          {displayedCars.map((car) => (
+            <CarRow key={car.listing.id} car={car} />
+          ))}
+        </div>
+      </div>
 
       <Button size="lg" onClick={onCompare} className="mt-8 w-full justify-center">
         Compare buy now and wait →

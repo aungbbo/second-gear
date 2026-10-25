@@ -1,4 +1,4 @@
-export { assessAffordability, DEFAULT_REFERENCE_VEHICLE_PRICE, type AssessmentOptions } from "@/lib/affordability/assessment";
+export { assessAffordability, type AssessmentOptions } from "@/lib/affordability/assessment";
 export { buildAffordableSearchConstraints } from "@/lib/affordability/constraints";
 export {
   calculateOwnershipCosts,

@@ -1,39 +1,25 @@
 import { runListingsActor } from "@/lib/apify/client";
 import { getApifyConfig, type LiveApifyConfig } from "@/lib/apify/config";
-import { ApifyError, LISTINGS_EMPTY, LISTINGS_MISSING_MAKE } from "@/lib/apify/errors";
+import { ApifyError, LISTINGS_EMPTY } from "@/lib/apify/errors";
 import { guardedRun } from "@/lib/apify/guard";
 import { mapListings, type MapOptions } from "@/lib/apify/mapper";
 import { mockListings } from "@/lib/apify/mock";
-import { buildSearchInput, MIN_PRICE } from "@/lib/apify/search";
-import type { CarsComSearchInput } from "@/lib/apify/types";
-import { getSearchPlanner, normalizePlan, type VehicleSearchPlan } from "@/lib/search-plan";
+import { buildSearchInput } from "@/lib/apify/search";
+import type { CarfaxSearchInput } from "@/lib/apify/types";
 import type { AffordabilityResult, AffordableSearchConstraints, BuyerNeed, CarListing, CreditReport } from "@/lib/types";
 
 export interface ListingsSearchOptions {
-  /**
-   * Limits from the affordability assessment, computed in code. Its `maxPrice`
-   * caps the search; a live search with no room above the minimum price stops
-   * before any paid run. No planner or AI output can change these.
-   */
+  /** Search constraints. `maxPrice` is null when monthly cash flow cannot
+   * support a defensible vehicle-price cap without an APR and loan term. */
   constraints: AffordableSearchConstraints;
-  /** What to search for. Defaults to the current planner's plan for `need`. */
-  plan?: VehicleSearchPlan;
+  /** Legacy field ignored; Bitdeer is only used after listings are fetched. */
+  plan?: unknown;
 }
 
 /**
- * Fails fast, before any credit pull or paid run, when a live search can't
- * start from this plan. Mock mode needs no make.
- */
-export function assertSearchablePlan(plan: VehicleSearchPlan): void {
-  const cfg = getApifyConfig();
-  if (cfg.mode === "live" && !normalizePlan(plan).make) {
-    throw new ApifyError("missing_make", LISTINGS_MISSING_MAKE, { detail: `plan source=${plan.source}` });
-  }
-}
-
-/**
- * Step 3 — used-car listings near the buyer, priced to what their cash flow
- * can carry. APIFY_MODE picks a live run of the Cars.com listings Actor or
+ * Step 3 — used-car listings near the buyer. Affordability is assessed against
+ * returned listings rather than used to infer a purchase-price cap. APIFY_MODE
+ * picks a live run of the CARFAX listings Actor or
  * the demo mock explicitly; a live failure throws an ApifyError and never
  * falls back to mock listings.
  */
@@ -46,13 +32,13 @@ export async function searchLiveListings(
   const cfg = getApifyConfig();
   if (cfg.mode === "mock") return mockListings(need, affordability, credit);
 
-  const plan = normalizePlan(options.plan ?? (await getSearchPlanner()({ need })));
   const { constraints } = options;
-  const input = buildSearchInput({ need, constraints, plan }, cfg);
+  const input = buildSearchInput({ need, constraints }, cfg);
+  if (process.env.NODE_ENV !== "production") {
+    console.info("[apify] CARFAX Actor input:\n" + JSON.stringify(input, null, 2));
+  }
   const filters: MapOptions = {
-    minPrice: Math.max(MIN_PRICE, constraints.minPrice),
-    bodyStyles: plan.bodyStyles,
-    fuelTypes: plan.fuelTypes,
+    minPrice: Math.max(3000, constraints.minPrice),
   };
   const key = JSON.stringify([cfg.actorId, input, filters]);
   return guardedRun(cfg, key, () => fetchListings(cfg, input, filters));
@@ -62,7 +48,7 @@ export async function searchLiveListings(
  * One paid run, mapped. Throws rather than returning an empty list, so an
  * inconclusive result is never cached or shown as "no cars for sale".
  */
-async function fetchListings(cfg: LiveApifyConfig, input: CarsComSearchInput, filters: MapOptions): Promise<CarListing[]> {
+async function fetchListings(cfg: LiveApifyConfig, input: CarfaxSearchInput, filters: MapOptions): Promise<CarListing[]> {
   const run = await runListingsActor(cfg, input);
   const { listings, stats } = mapListings(run.items, filters);
 

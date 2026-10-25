@@ -40,7 +40,7 @@ const STEP_DEFS = [
   },
   {
     label: "Ranking and explaining results",
-    provider: "Second Gear",
+    provider: "Bitdeer AI",
     whatItDoes: "Weighs cost, risk, and fit.",
     working: "Weighing cost, risk, and fit…",
   },
@@ -84,9 +84,13 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
         return (await res.json()) as PipelineResult;
       });
 
+      // Advance one visible step at a time. The backend doesn't stream
+      // intermediate progress, so the live listing search remains active
+      // until the complete response is available.
       for (let i = 0; i < 4; i++) {
         setOne(i, "active");
-        await sleep(620);
+        await sleep(700);
+        if (i < 3) setOne(i, "done", `${STEP_DEFS[i].label} complete.`);
       }
 
       let data: PipelineResult;
@@ -98,16 +102,20 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
       }
 
       const realNotes = [
-        `Score ${data.credit.score} · ${data.credit.tierLabel} · est. APR ${data.credit.estimatedApr.min}–${data.credit.estimatedApr.max}% (our estimate)`,
+        `Score ${data.credit.score} · ${data.credit.tierLabel} · avg. used-car APR ${data.credit.estimatedApr.min === data.credit.estimatedApr.max ? `${data.credit.estimatedApr.min.toFixed(2)}%` : `${data.credit.estimatedApr.min.toFixed(2)}–${data.credit.estimatedApr.max.toFixed(2)}%`} (estimate)`,
         `Safe ceiling $${data.affordability.recommendedPayment}/mo, read from real cash flow`,
         `${data.listings.length} live listings found near ${need.zip}`,
         `${data.listings.length} cars priced across 4 loan terms each`,
         `Top pick: ${data.rankedCars[0]?.listing.year} ${data.rankedCars[0]?.listing.make} ${data.rankedCars[0]?.listing.model}`,
       ];
 
+      setOne(3, "done", realNotes[3]);
+      setOne(4, "active");
+      await sleep(300);
+
       for (let i = 0; i < 5; i++) {
         setOne(i, "done", realNotes[i]);
-        await sleep(200);
+        await sleep(120);
       }
 
       await sleep(700);
@@ -132,7 +140,6 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
       <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">
         Here is how your plan is built.
       </h1>
-      <p className="mt-2 text-ink-soft">Open any step to see its inputs and findings.</p>
 
       <div className="mt-8 flex items-center justify-between text-sm font-medium">
         <span>{percent === 100 ? "Analysis complete" : "Analyzing…"}</span>

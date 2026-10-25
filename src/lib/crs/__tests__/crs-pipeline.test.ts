@@ -140,7 +140,7 @@ describe("live CRS + live Nessie through /api/pipeline", () => {
     const res = await run({ need: NEED, consentToken: token() });
     expect(res.status).toBe(200);
     const body = res.body as PipelineResult;
-    expect(body.credit).toMatchObject({ score: 540, tier: "deep-subprime", estimatedApr: { min: 18, max: 24 }, hardInquiriesLast6mo: null });
+    expect(body.credit).toMatchObject({ score: 540, tier: "subprime", estimatedApr: { min: 19.1, max: 19.1 }, hardInquiriesLast6mo: null });
     expect(body.affordability).toEqual(analyzeSnapshot(baselineSnapshot(), body.need, NOW));
     expect(body.rankedCars.length).toBeGreaterThan(0);
     expect(mockSoftCredit).not.toHaveBeenCalled();

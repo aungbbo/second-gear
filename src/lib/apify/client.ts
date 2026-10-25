@@ -1,6 +1,6 @@
 import type { LiveApifyConfig } from "@/lib/apify/config";
 import { ApifyError, LISTINGS_TIMEOUT, LISTINGS_UNAVAILABLE } from "@/lib/apify/errors";
-import type { CarsComSearchInput } from "@/lib/apify/types";
+import type { CarfaxSearchInput } from "@/lib/apify/types";
 
 /** Apify holds a start or status request open for at most 60 s. */
 const MAX_WAIT_SECS = 60;
@@ -15,6 +15,7 @@ interface RunInfo {
   id: string;
   status: string;
   defaultDatasetId: string;
+  statusMessage?: string;
 }
 
 export interface ActorRunResult {
@@ -32,12 +33,15 @@ function errorType(json: unknown): string {
 
 function statusError(status: number, type: string): ApifyError {
   const detail = `HTTP ${status} ${type}`;
-  if (status === 401 || status === 403) return new ApifyError("auth", LISTINGS_UNAVAILABLE, { status, detail });
-  if (status === 402) return new ApifyError("quota", LISTINGS_UNAVAILABLE, { status, detail });
-  if (status === 404) return new ApifyError("not_found", LISTINGS_UNAVAILABLE, { status, detail });
+  if (status === 401 || status === 403) return new ApifyError("auth", "Apify rejected the API token or access to the CARFAX Actor. Check the token and Actor permissions.", { status, detail });
+  if (status === 402) return new ApifyError("quota", "Apify couldn't start the listing search because of an account usage or billing limit.", { status, detail });
+  if (status === 404) return new ApifyError("not_found", "Apify couldn't find the configured Actor or its dataset. Check the Actor ID and latest run.", { status, detail });
   if (status === 408) return new ApifyError("timeout", LISTINGS_TIMEOUT, { status, detail });
-  if (status === 429) return new ApifyError("rate_limited", LISTINGS_UNAVAILABLE, { status, detail });
-  return new ApifyError("upstream", LISTINGS_UNAVAILABLE, { status, detail });
+  if (status === 429) return new ApifyError("rate_limited", "Apify rate-limited the live search. Wait a little before trying again.", { status, detail });
+  const message = status === 400
+    ? "Apify rejected the Actor input or dataset request. Check the latest CARFAX run and its input in your Apify console."
+    : `Apify returned HTTP ${status} while starting the search or reading listings. Check the latest CARFAX run in your Apify console.`;
+  return new ApifyError("upstream", message, { status, detail });
 }
 
 /**
@@ -82,7 +86,12 @@ function runInfo(json: unknown): RunInfo {
   if (typeof data?.id !== "string" || typeof data.status !== "string" || typeof data.defaultDatasetId !== "string") {
     throw new ApifyError("invalid_response", LISTINGS_UNAVAILABLE, { detail: "run object is missing id, status, or defaultDatasetId" });
   }
-  return { id: data.id, status: data.status, defaultDatasetId: data.defaultDatasetId };
+  return {
+    id: data.id,
+    status: data.status,
+    defaultDatasetId: data.defaultDatasetId,
+    statusMessage: typeof data.statusMessage === "string" ? data.statusMessage.slice(0, 500) : undefined,
+  };
 }
 
 /**
@@ -95,7 +104,7 @@ function runInfo(json: unknown): RunInfo {
  * spend, and run time are capped on Apify's side on every run. Never
  * retried: each run is billed.
  */
-export async function runListingsActor(cfg: LiveApifyConfig, input: CarsComSearchInput): Promise<ActorRunResult> {
+export async function runListingsActor(cfg: LiveApifyConfig, input: CarfaxSearchInput): Promise<ActorRunResult> {
   const deadline = Date.now() + cfg.timeoutSecs * 1000 + ABORT_GRACE_MS;
   const waitFor = () => Math.max(0, Math.min(MAX_WAIT_SECS, Math.ceil((deadline - Date.now()) / 1000)));
 
@@ -125,7 +134,12 @@ export async function runListingsActor(cfg: LiveApifyConfig, input: CarsComSearc
   }
 
   if (run.status === "FAILED" || (run.status === "ABORTED" && !abortedByApp)) {
-    throw new ApifyError("upstream", LISTINGS_UNAVAILABLE, { detail: `run ${run.status}` });
+    const detail = [`run ${run.id} ${run.status}`, run.statusMessage].filter(Boolean).join(": ");
+    throw new ApifyError(
+      "upstream",
+      "The CARFAX listings Actor failed in Apify. Check the latest run's Actor log in your Apify console, then try again.",
+      { detail },
+    );
   }
 
   const itemsQuery = new URLSearchParams({ format: "json", clean: "true", limit: String(cfg.maxItems) });

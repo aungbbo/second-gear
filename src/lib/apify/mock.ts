@@ -1,5 +1,4 @@
 import { CAR_CATALOG, CITY_STATE, DEALER_NAMES } from "@/lib/catalog";
-import { principalForPayment } from "@/lib/calculations";
 import { SeededRandom } from "@/lib/random";
 import type { AffordabilityResult, BuyerNeed, CarListing, CreditReport } from "@/lib/types";
 
@@ -11,15 +10,12 @@ const CURRENT_YEAR = new Date().getFullYear();
  */
 export async function mockListings(
   need: BuyerNeed,
-  affordability: AffordabilityResult,
-  credit: CreditReport,
+  _affordability: AffordabilityResult,
+  _credit: CreditReport,
 ): Promise<CarListing[]> {
   await simulateLatency(700, 1100);
 
   const rand = new SeededRandom(`apify:${need.zip}:${need.description}`);
-  const midApr = (credit.estimatedApr.min + credit.estimatedApr.max) / 2;
-  const centerPrice = principalForPayment(affordability.maxSustainablePayment, midApr, 60);
-
   const count = rand.int(9, 12);
   const listings: CarListing[] = [];
 
@@ -29,12 +25,12 @@ export async function mockListings(
     const dealer = rand.pick(DEALER_NAMES);
     const location = rand.pick(CITY_STATE);
 
-    // Spread listings from well under budget to clearly over budget so the
-    // true-cost pass downstream has real tradeoffs to rank.
-    const spread = rand.between(0.55, 1.6);
+    // Generate used-car prices independently of the buyer's monthly ceiling;
+    // affordability is assessed against each listing downstream.
+    const spread = rand.between(0.55, 0.9);
     const age = rand.int(1, 8);
     const basePrice = catalogEntry.basePriceNew * Math.pow(0.86, age);
-    const price = Math.round(((basePrice * 0.6 + centerPrice * spread * 0.4)) / 50) * 50;
+    const price = Math.round((basePrice * spread) / 50) * 50;
 
     const avgMiles = age * rand.between(9000, 14000);
 

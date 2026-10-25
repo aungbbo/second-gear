@@ -42,7 +42,7 @@ export function DealerPacketView({ result, onBack }: DealerPacketViewProps) {
           <p className="mt-2 text-sm leading-relaxed text-ink-soft">{dealerPacket.creditSummary}</p>
           <p className="mt-2 text-sm">
             Tier: <span className="font-medium">{dealerPacket.tierLabel}</span> · Max APR to accept:{" "}
-            <span className="font-medium">{credit.estimatedApr.max}%</span>{" "}
+            <span className="font-medium">{credit.estimatedApr.max.toFixed(2)}%</span>{" "}
             <span className="text-ink-soft">(our estimate for your score band, not a lender offer or approval)</span>
           </p>
         </section>

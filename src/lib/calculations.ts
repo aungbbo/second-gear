@@ -55,12 +55,11 @@ export function countNegativeEquityMonths(
   return months;
 }
 
-/** APR edges up slightly on longer terms, reflecting real subprime pricing. */
-export function aprForTerm(baseAprMin: number, baseAprMax: number, termMonths: number): number {
+/** Uses the score band's average used-car APR; the supplied chart has no term-specific rates. */
+export function aprForTerm(baseAprMin: number, baseAprMax: number, _termMonths: number): number {
+  void _termMonths;
   const base = (baseAprMin + baseAprMax) / 2;
-  if (base === 0) return 0;
-  const escalation = ((termMonths - 36) / 36) * 1.6;
-  return Math.round((base + escalation) * 10) / 10;
+  return Math.round(base * 100) / 100;
 }
 
 export function buildLoanScenario(

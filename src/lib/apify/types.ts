@@ -1,8 +1,19 @@
+/** ParseForge CARFAX listings Actor (`parseforge/carfax-scraper`) input. */
+export interface CarfaxSearchInput {
+  includeDealerContact: false;
+  includeHistory: true;
+  includePaymentEstimate: false;
+  includePriceHistory: false;
+  maxItems: number;
+  radius: "50";
+  zipCode: string;
+  /** @deprecated Legacy test fixture field; not sent to the CARFAX Actor. */
+  searchRadius?: number;
+}
+
 /**
- * Input and dataset item for the Cars.com listings Actor
- * (`skootle/cars-com-scraper`), taken from its input schema and the dataset
- * of test run `fW2UhtNyQQmOJGGL9` (output schema version 2026-05-09). Only
- * the fields the app sends or reads are listed.
+ * Legacy Cars.com input kept for the saved historical fixture and migration
+ * tests. Live runs now use CarfaxSearchInput.
  */
 
 /**
@@ -20,7 +31,6 @@ export interface CarsComSearchInput {
   /** `0` means no cap. */
   mileageMax: number;
   zip: string;
-  searchRadius: number;
   condition: "USED";
   maxItems: number;
 }
@@ -49,4 +59,48 @@ export interface CarsComListingItem {
     city?: unknown;
     state?: unknown;
   } | null;
+}
+
+/** CARFAX dataset row fields consumed by this app. */
+export interface CarfaxListingItem {
+  carfaxId?: unknown;
+  stockNumber?: unknown;
+  url?: unknown;
+  title?: unknown;
+  listPrice?: unknown;
+  currentPrice?: unknown;
+  totalPrice?: unknown;
+  sellerCity?: unknown;
+  sellerRegion?: unknown;
+  subTrim?: unknown;
+  bodyStyle?: unknown;
+  mpgCity?: unknown;
+  mpgHighway?: unknown;
+  mpgCombined?: unknown;
+  dealerCity?: unknown;
+  dealerState?: unknown;
+  dealerZip?: unknown;
+  dealerName?: unknown;
+  dealerAddress?: unknown;
+  dealerPhone?: unknown;
+  firstSeen?: unknown;
+  error?: unknown;
+  accidentHistory?: unknown;
+  ownerHistory?: unknown;
+  serviceHistory?: unknown;
+  vehicleUseHistory?: unknown;
+  priceHistory?: unknown;
+  vin?: unknown;
+  listingUrl?: unknown;
+  year?: unknown;
+  make?: unknown;
+  model?: unknown;
+  trim?: unknown;
+  bodyType?: unknown;
+  fuelType?: unknown;
+  price?: unknown;
+  mileage?: unknown;
+  oneOwner?: unknown;
+  noAccidents?: unknown;
+  serviceRecords?: unknown;
 }

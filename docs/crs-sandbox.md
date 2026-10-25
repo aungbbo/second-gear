@@ -59,7 +59,7 @@ The sandbox also returns `responseDetail.dateRequested` where `dateOrdered` is a
 - the score
 - the tier
 - factors (utilization, payment history, collections/charge-offs, public records, inquiries, history length, account mix, and up to two bureau reason codes)
-- an estimated APR range
+- a score tier and estimated average used-car APR
 - a summary
 
 It never includes names, SSNs, dates of birth, addresses, account numbers, creditor names, or CRS request ids.
@@ -74,6 +74,6 @@ It never includes names, SSNs, dates of birth, addresses, account numbers, credi
   - credit comes from CRS
   - cash flow comes from Nessie
   - affordability depends only on the Nessie data
-  - the CRS score sets the estimated APR band (540 → deep subprime, 18–24%)
+  - the CRS score maps to the supplied Experian used-car APR table (540 → deep subprime, 21.62%)
 - Sandbox requests that don't match a persona reach a real vendor and are billable (`billable: true` in `GET /users/logs`). That is why only allowlisted personas can be pulled.
 - Live sandbox requests are gated by `CRS_LIVE_PULLS_ENABLED`, verified single-use consent, request rate limits, and a global CRS pull quota. Keep the switch off except while testing.

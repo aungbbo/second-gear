@@ -28,7 +28,7 @@ export function analyzeCars(
       downPayment,
       credit.estimatedApr.min,
       credit.estimatedApr.max,
-      assessment.maxSustainableLoanPayment,
+      assessment.sustainableMonthlyPayment,
     );
     const evaluation = evaluateVehicle(
       listing,
@@ -39,37 +39,6 @@ export function analyzeCars(
     const bestScenario = evaluation.scenario;
     const estimatedValueAt36mo = bestScenario.estimatedValueAt36Months || Math.round(depreciatedValue(listing.price, 36));
 
-    const warnings: string[] = [];
-
-    if (!bestScenario.withinBudget) {
-      const over = bestScenario.monthlyPayment - assessment.maxSustainableLoanPayment;
-      warnings.push(
-        `Even stretched to ${bestScenario.termMonths} months, the payment runs $${over}/mo over your safe budget.`,
-      );
-    }
-
-    if (bestScenario.negativeEquityMonths >= 30) {
-      warnings.push(
-        `You'd owe more than the car is worth for roughly ${bestScenario.negativeEquityMonths} months — risky if you need to sell or trade in early.`,
-      );
-    }
-
-    if (bestScenario.totalInterest > listing.price * 0.35) {
-      warnings.push(
-        `Interest alone adds $${bestScenario.totalInterest.toLocaleString()} — more than a third of the car's price.`,
-      );
-    }
-
-    if (bestScenario.termMonths >= 72) {
-      warnings.push("Only fits your budget on a 72-month term — a long time to owe on a depreciating car.");
-    }
-
-    if (listing.mileage > 105000) {
-      warnings.push(`${listing.mileage.toLocaleString()} miles already on it — budget for maintenance sooner.`);
-    }
-
-    warnings.push(...evaluation.decision.reasons, ...evaluation.decision.warnings);
-
     return {
       listing,
       bestScenario,
@@ -77,7 +46,57 @@ export function analyzeCars(
       estimatedValueAt36mo,
       ownershipCosts: evaluation.ownershipCosts,
       affordabilityDecision: evaluation.decision,
-      warnings: [...new Set(warnings)],
+      warnings: buildVehicleWarnings(listing, bestScenario, assessment, evaluation.decision),
     };
   });
+}
+
+/** Re-evaluate loan-term fit after the ranking model supplies vehicle-cost estimates. */
+export function applyOwnershipCostEstimates(
+  analysis: CarAnalysis,
+  overrides: BuyerNeed["ownershipCostOverrides"],
+  assessment: AffordabilityAssessment,
+): CarAnalysis {
+  const evaluation = evaluateVehicle(analysis.listing, analysis.allScenarios, assessment, overrides);
+  return {
+    ...analysis,
+    bestScenario: evaluation.scenario,
+    ownershipCosts: evaluation.ownershipCosts,
+    affordabilityDecision: evaluation.decision,
+    warnings: buildVehicleWarnings(analysis.listing, evaluation.scenario, assessment, evaluation.decision),
+  };
+}
+
+function buildVehicleWarnings(
+  listing: CarListing,
+  scenario: CarAnalysis["bestScenario"],
+  assessment: AffordabilityAssessment,
+  decision: CarAnalysis["affordabilityDecision"],
+): string[] {
+  const warnings: string[] = [];
+
+  if (!scenario.withinBudget) {
+    const over = scenario.monthlyPayment - assessment.sustainableMonthlyPayment;
+    warnings.push(`Even stretched to ${scenario.termMonths} months, the payment runs $${over}/mo over your safe budget.`);
+  }
+  if (scenario.negativeEquityMonths >= 30) {
+    warnings.push(`You'd owe more than the car is worth for roughly ${scenario.negativeEquityMonths} months — risky if you need to sell or trade in early.`);
+  }
+  if (scenario.totalInterest > listing.price * 0.35) {
+    warnings.push(`Interest alone adds $${scenario.totalInterest.toLocaleString()} — more than a third of the car's price.`);
+  }
+  if (scenario.termMonths >= 72) {
+    warnings.push("Only fits your budget on a 72-month term — a long time to owe on a depreciating car.");
+  }
+  if (listing.mileage > 105000) {
+    warnings.push(`${listing.mileage.toLocaleString()} miles already on it — budget for maintenance sooner.`);
+  }
+  if (listing.carfaxHistory?.noAccidents === false || (listing.carfaxHistory?.noAccidents !== true && listing.carfaxHistory?.accidentNotes?.length)) {
+    const detail = listing.carfaxHistory.accidentNotes?.[0];
+    warnings.push(detail ? `CARFAX history: ${detail}` : "CARFAX reports accident history for this vehicle.");
+  }
+  if (listing.carfaxHistory?.oneOwner === false) warnings.push("CARFAX reports more than one previous owner.");
+
+  warnings.push(...decision.reasons, ...decision.warnings);
+  return [...new Set(warnings)];
 }

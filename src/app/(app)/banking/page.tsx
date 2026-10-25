@@ -10,10 +10,9 @@ import { useAppState } from "@/lib/app-state";
 import { summarizeBankActivity } from "@/lib/nessie/categorize";
 import type { AccountsView } from "@/lib/nessie/account-view";
 
-// Keep the Banking estimate consistent with the cash-flow affordability policy.
-const CAR_PAYMENT_SHARE_OF_INCOME = 0.18;
-const BUFFER_SHARE_FOR_CAR = 0.7;
-const RECOMMENDED_SHARE_OF_MAX = 0.88;
+// Only a conservative share of the current leftover cash flow is suggested
+// for a car payment, so the estimate responds directly to bank activity.
+const AVAILABLE_CASH_FLOW_SHARE_FOR_CAR = 0.3;
 
 export default function BankingPage() {
   const { result } = useAppState();
@@ -29,13 +28,10 @@ export default function BankingPage() {
   const essentials = summary?.livingExpenses ?? 0;
 
   const discretionary = summary?.availableCashFlow ?? 0;
-  const safeCeiling = summary
-    ? Math.max(0, Math.round((summary.monthlyIncome * CAR_PAYMENT_SHARE_OF_INCOME - summary.debtPayments) / 5) * 5)
-    : 0;
-  const maxSustainable = summary
-    ? Math.max(0, Math.min(safeCeiling, Math.round(discretionary * BUFFER_SHARE_FOR_CAR)))
-    : 0;
-  const recommended = Math.round((maxSustainable * RECOMMENDED_SHARE_OF_MAX) / 5) * 5;
+  const recommended = Math.max(
+    0,
+    Math.round((discretionary * AVAILABLE_CASH_FLOW_SHARE_FOR_CAR) / 5) * 5,
+  );
 
   const total = summary?.monthlyIncome || 1;
   const essentialsPct = (essentials / total) * 100;
@@ -138,7 +134,7 @@ export default function BankingPage() {
               <span className="w-12 h-12 rounded-xl bg-teal-paper flex items-center justify-center">
                 <Car className="w-5 h-5 text-teal-deep" />
               </span>
-              <p className="text-xs text-ink-soft mt-3">Estimated affordable loan payment</p>
+              <p className="text-xs text-ink-soft mt-3">Estimated affordable auto payment</p>
               <p className="font-display font-extrabold text-4xl text-teal mt-1 tabular">
                 ${recommended}
                 <span className="text-base font-medium text-ink-soft">/mo</span>

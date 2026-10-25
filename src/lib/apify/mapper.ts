@@ -1,4 +1,4 @@
-import type { CarsComListingItem } from "@/lib/apify/types";
+import type { CarfaxListingItem, CarsComListingItem } from "@/lib/apify/types";
 import { CAR_CATALOG } from "@/lib/catalog";
 import { matchesBodyStyle, matchesFuelType, type PlanBodyStyle, type PlanFuelType } from "@/lib/search-plan";
 import type { CarListing } from "@/lib/types";
@@ -39,9 +39,9 @@ export function combinedMpg(city: number | undefined, highway: number | undefine
   return c ? Math.round(c) : undefined;
 }
 
-const LISTING_HOSTS = ["cars.com"];
+const LISTING_HOSTS = ["carfax.com", "cargurus.com", "cars.com"];
 
-/** Only an https link to Cars.com itself is passed to the browser. */
+/** Only an https link to a known listings site is passed to the browser. */
 export function safeListingUrl(value: unknown): string | undefined {
   const raw = str(value);
   if (!raw) return undefined;
@@ -75,6 +75,34 @@ export function hueFor(id: string): number {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function numeric(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const match = value.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function historyNotes(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (typeof entry === "string" && entry.trim()) return [entry.trim().slice(0, 180)];
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    const description = [record.description, record.summary, record.event, record.title]
+      .find((part): part is string => typeof part === "string" && part.trim().length > 0);
+    return description ? [description.trim().slice(0, 180)] : [];
+  }).slice(0, 4);
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
 /** Whole days since `listedAt`; undefined when missing, unparsable, or in the future. */
 export function daysSince(listedAt: string | undefined, now: number): number | undefined {
   if (!listedAt) return undefined;
@@ -105,16 +133,24 @@ export function mapListings(items: unknown[], options: MapOptions = {}): { listi
   const seenVins = new Set<string>();
 
   for (const raw of items) {
-    const item = (raw && typeof raw === "object" ? raw : {}) as CarsComListingItem;
+    const item = (raw && typeof raw === "object" ? raw : {}) as CarfaxListingItem & CarsComListingItem;
     const dealer: NonNullable<CarsComListingItem["dealer"]> = item.dealer && typeof item.dealer === "object" ? item.dealer : {};
-    const listingId = str(item.listingId) ?? (num(item.listingId) !== undefined ? String(item.listingId) : undefined);
-    const year = num(item.year);
+    const listingId = str(item.carfaxId) ?? str(item.listingId) ?? str(item.stockNumber) ?? str(item.vin) ?? str(item.url) ??
+      (num(item.listingId) !== undefined ? String(item.listingId) : undefined);
+    const year = numeric(item.year);
     const make = str(item.make);
     const model = str(item.model);
-    const price = num(item.priceUsd);
-    const mileage = num(item.mileageMiles);
-    const city = str(dealer.city);
-    const state = str(dealer.state);
+    const price = [numeric(item.currentPrice), numeric(item.listPrice), numeric(item.totalPrice), numeric(item.price), numeric(item.priceUsd)]
+      .find((value): value is number => value !== undefined && value > 0);
+    const mileage = numeric(item.mileage) ?? numeric(item.mileageMiles);
+    const rawSellerCity = str(item.dealerCity) ?? str(item.sellerCity);
+    const sellerCityParts = rawSellerCity?.split(",").map((part) => part.trim()) ?? [];
+    const city = (sellerCityParts[0] || undefined) ?? str(dealer.city);
+    const state = str(item.dealerState) ?? str(item.sellerRegion) ?? sellerCityParts[1] ?? str(dealer.state);
+    const isCarfaxRow = !!(
+      str(item.carfaxId) || str(item.url) || str(item.dealerCity) ||
+      item.currentPrice !== undefined || item.noAccidents !== undefined || item.ownerHistory !== undefined
+    );
 
     if (
       !listingId || !make || !model || !city || !state ||
@@ -125,7 +161,7 @@ export function mapListings(items: unknown[], options: MapOptions = {}): { listi
       stats.incomplete++;
       continue;
     }
-    const bodyStyle = str(item.bodyStyle) ?? catalogEntry(make, model)?.bodyStyle;
+    const bodyStyle = str(item.bodyStyle) ?? str(item.bodyType) ?? catalogEntry(make, model)?.bodyStyle;
     if (
       price < (options.minPrice ?? 0) ||
       !matchesBodyStyle(bodyStyle, options.bodyStyles ?? []) ||
@@ -135,7 +171,8 @@ export function mapListings(items: unknown[], options: MapOptions = {}): { listi
       continue;
     }
 
-    const mpg = combinedMpg(num(item.mpgCity), num(item.mpgHighway)) ?? catalogEntry(make, model)?.mpgCombined;
+    const mpg = [numeric(item.mpgCombined), combinedMpg(numeric(item.mpgCity), numeric(item.mpgHighway))]
+      .find((value): value is number => value !== undefined && value > 0) ?? catalogEntry(make, model)?.mpgCombined;
     if (mpg === undefined) {
       stats.noMpg++;
       continue;
@@ -149,18 +186,24 @@ export function mapListings(items: unknown[], options: MapOptions = {}): { listi
     seenIds.add(listingId);
     if (vin) seenVins.add(vin);
 
-    const days = daysSince(str(item.listedAt), now);
-    const listingUrl = safeListingUrl(item.listingUrl);
+    const days = daysSince(str(item.firstSeen) ?? str(item.listedAt), now);
+    const listingUrl = safeListingUrl(item.url) ?? safeListingUrl(item.listingUrl);
+    const noAccidents = optionalBoolean(item.noAccidents);
+    const accidentNotes = noAccidents === true ? [] : historyNotes(item.accidentHistory);
+    const serviceNotes = historyNotes(item.serviceHistory);
+    const owners = Array.isArray(item.ownerHistory) ? item.ownerHistory : [];
+    const ownerNumbers = owners.map((owner) => owner && typeof owner === "object" ? numeric((owner as Record<string, unknown>).ownerNumber) : undefined)
+      .filter((ownerNumber): ownerNumber is number => ownerNumber !== undefined);
     listings.push({
-      id: `cc_${listingId}`,
+      id: `${isCarfaxRow ? "cf" : "cc"}_${listingId}`,
       year,
       make,
       model,
-      trim: str(item.trim) ?? "",
+      trim: str(item.trim) ?? str(item.subTrim) ?? "",
       bodyStyle: bodyStyle ?? "Vehicle",
       price: Math.round(price),
       mileage: Math.round(mileage),
-      dealerName: str(dealer.name) ?? "Private seller",
+      dealerName: str(item.dealerName) ?? str(dealer.name) ?? "Dealer details unavailable",
       city,
       state,
       // Unknown age counts as fresh, which keeps the walk-away margin at its most conservative.
@@ -169,7 +212,22 @@ export function mapListings(items: unknown[], options: MapOptions = {}): { listi
       reliabilityScore: reliabilityFor(make, model),
       vin,
       accentHue: hueFor(listingId),
+      ...(str(item.fuelType) ? { fuelType: str(item.fuelType) } : {}),
       ...(listingUrl ? { listingUrl } : {}),
+      ...(isCarfaxRow && (
+        noAccidents !== undefined || optionalBoolean(item.oneOwner) !== undefined ||
+        optionalBoolean(item.serviceRecords) !== undefined || accidentNotes.length > 0 ||
+        serviceNotes.length > 0 || owners.length > 0
+      ) ? {
+        carfaxHistory: {
+          ...(noAccidents !== undefined ? { noAccidents } : {}),
+          ...(optionalBoolean(item.oneOwner) !== undefined ? { oneOwner: optionalBoolean(item.oneOwner) } : {}),
+          ...(optionalBoolean(item.serviceRecords) !== undefined ? { serviceRecords: optionalBoolean(item.serviceRecords) } : {}),
+          ...(accidentNotes.length ? { accidentNotes } : {}),
+          ...(serviceNotes.length ? { serviceNotes } : {}),
+          ...(ownerNumbers.length ? { ownerCount: Math.max(...ownerNumbers) } : owners.length ? { ownerCount: owners.length } : {}),
+        },
+      } : {}),
     });
   }
 

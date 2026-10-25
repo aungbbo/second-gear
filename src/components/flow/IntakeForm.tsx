@@ -21,7 +21,22 @@ const TIMEFRAMES: { label: string; weeks: number }[] = [
   { label: "Flexible", weeks: 8 },
 ];
 const COMMUTES = ["Under 10 miles", "10–25 miles", "25–50 miles", "50+ miles"];
-const PRIORITIES = ["Low total cost", "Low monthly payment", "Reliability", "Fuel efficiency"];
+const PRIORITIES = [
+  "Best deal first",
+  "Price: low to high",
+  "Price: high to low",
+  "Mileage: low to high",
+  "Year: newest first",
+  "Distance: nearest first",
+];
+const PRIORITY_SORT: Record<(typeof PRIORITIES)[number], NonNullable<BuyerNeed["searchSortBy"]>> = {
+  "Best deal first": "deal_score",
+  "Price: low to high": "price_asc",
+  "Price: high to low": "price_desc",
+  "Mileage: low to high": "mileage_asc",
+  "Year: newest first": "year_desc",
+  "Distance: nearest first": "distance",
+};
 
 export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
   const [budget, setBudget] = useState(initial.maxMonthlyPayment);
@@ -29,7 +44,9 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
   const [timeframe, setTimeframe] = useState(TIMEFRAMES[1]);
   const [commute, setCommute] = useState(COMMUTES[1]);
   const [priority, setPriority] = useState(PRIORITIES[0]);
-  const [downPayment, setDownPayment] = useState(initial.downPayment);
+  // Keep the editable text separate from its numeric value so users can clear
+  // the field while replacing the default.
+  const [downPayment, setDownPayment] = useState(String(initial.downPayment));
   const [zip, setZip] = useState(initial.zip);
 
   function handleSubmit(e: React.FormEvent) {
@@ -39,8 +56,9 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
       description: `${carPhrase} for a ${commute.toLowerCase()} commute, prioritizing ${priority.toLowerCase()}.`,
       maxMonthlyPayment: budget,
       timeframeWeeks: timeframe.weeks,
-      downPayment,
+      downPayment: Number(downPayment) || 0,
       zip,
+      searchSortBy: PRIORITY_SORT[priority],
     });
   }
 
@@ -51,21 +69,21 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
         <h1 className="font-display font-extrabold text-[2.25rem] sm:text-[2.75rem] leading-tight mt-3">
           Find a car that fits
           <br />
-          <span className="font-accent text-teal text-[2.5rem] sm:text-[3rem] leading-tight">your full budget.</span>
+          <span className="font-accent text-teal text-[2.5rem] sm:text-[3rem] leading-tight">your budget</span>
         </h1>
         <p className="mt-3 text-ink-soft">Set a starting point. Second Gear will check the loan and the full cost of ownership.</p>
       </div>
 
       <div className="mt-8 bg-card border border-line rounded-2xl p-6 sm:p-8 space-y-8">
         <Slider
-          label="Monthly loan target"
+          label="Monthly total cost target"
           value={budget}
           min={100}
           max={2000}
           step={10}
           onChange={setBudget}
           formatValue={(v) => `$${v}`}
-          hint="This is a starting point. We also check insurance, fuel, and maintenance."
+          hint="We also check insurance, fuel, and maintenance."
         />
 
         <div>
@@ -130,7 +148,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
                 max={20000}
                 step={50}
                 value={downPayment}
-                onChange={(e) => setDownPayment(Number(e.target.value))}
+                onChange={(e) => setDownPayment(e.target.value)}
                 className="w-full bg-transparent focus:outline-none tabular"
               />
             </div>

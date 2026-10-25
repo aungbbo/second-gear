@@ -64,7 +64,7 @@ export function ConsentStep({ need, onApprove, onBack }: ConsentStepProps) {
           <div className="flex-1">
             <p className="font-medium">Credit analysis</p>
             <p className="text-sm text-ink-soft mt-0.5">Uses your credit profile to estimate an APR.</p>
-            <p className="text-xs text-teal-deep mt-1">No credit inquiry is made</p>
+            <p className="text-xs text-teal-deep mt-1">No real credit inquiry is made</p>
           </div>
           <Toggle checked={creditOn} onChange={setCreditOn} label="Include credit analysis" />
         </div>
@@ -76,7 +76,7 @@ export function ConsentStep({ need, onApprove, onBack }: ConsentStepProps) {
           <div className="flex-1">
             <p className="font-medium">Cash flow analysis</p>
             <p className="text-sm text-ink-soft mt-0.5">Uses your income and spending to test affordability.</p>
-            <p className="text-xs text-teal-deep mt-1">No account is connected</p>
+            <p className="text-xs text-teal-deep mt-1">No real account is connected</p>
           </div>
           <Toggle checked={cashFlowOn} onChange={setCashFlowOn} label="Include cash flow analysis" />
         </div>

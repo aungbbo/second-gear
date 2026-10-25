@@ -1,4 +1,3 @@
-import { LOAN_TERMS_MONTHS, principalForPayment } from "@/lib/calculations";
 import type {
   AffordabilityAssessment,
   AffordabilityResult,
@@ -6,31 +5,13 @@ import type {
   CreditReport,
   FinancialRiskIndicator,
 } from "@/lib/types";
-import {
-  calculateOwnershipCosts,
-  DEFAULT_OWNERSHIP_COST_ASSUMPTIONS,
-  type OwnershipCostAssumptions,
-} from "@/lib/affordability/ownership";
 
 export interface AssessmentOptions {
-  preferredTermMonths?: number;
   emergencyReserveMonths?: number;
-  referenceVehiclePrice?: number;
-  referenceMpg?: number;
-  ownershipAssumptions?: Partial<OwnershipCostAssumptions>;
 }
 
-const DEFAULT_PREFERRED_TERM = 60;
 const DEFAULT_EMERGENCY_RESERVE_MONTHS = 3;
-export const DEFAULT_REFERENCE_VEHICLE_PRICE = 15_000;
 const roundMoney = (value: number) => Math.max(0, Math.round(value));
-const roundPrice = (value: number) => Math.max(0, Math.floor(value / 100) * 100);
-
-function preferredTerm(value: number | undefined): number {
-  return value !== undefined && LOAN_TERMS_MONTHS.includes(value as (typeof LOAN_TERMS_MONTHS)[number])
-    ? value
-    : DEFAULT_PREFERRED_TERM;
-}
 
 function risk(
   code: string,
@@ -42,18 +23,17 @@ function risk(
 }
 
 /**
- * Converts the existing Nessie cash-flow result and CRS APR estimate into a
- * separate, explicit affordability assessment. The legacy maxSustainablePayment
- * remains the cash-flow ceiling; this engine subtracts estimated ownership
- * costs before calculating a vehicle price range.
+ * Estimates a monthly vehicle-cost ceiling from user budget and observed cash
+ * flow. It deliberately does not convert that ceiling into a vehicle price:
+ * that conversion would require a loan APR and term that the user has not
+ * provided. Listing-specific loan scenarios are evaluated separately.
  */
 export function assessAffordability(
   need: BuyerNeed,
-  credit: CreditReport,
+  _credit: CreditReport,
   cashFlow: AffordabilityResult,
   options: AssessmentOptions = {},
 ): AffordabilityAssessment {
-  const termMonths = preferredTerm(options.preferredTermMonths);
   const reserveMonths = options.emergencyReserveMonths !== undefined && options.emergencyReserveMonths > 0
     ? options.emergencyReserveMonths
     : DEFAULT_EMERGENCY_RESERVE_MONTHS;
@@ -63,40 +43,9 @@ export function assessAffordability(
   const safeDownPayment = roundMoney(
     Math.min(need.downPayment, cashFlow.cashAvailableForDown, liquidAfterReserve * 0.7),
   );
-  const sustainableMonthlyVehicleCost = roundMoney(
+  const sustainableMonthlyPayment = roundMoney(
     Math.min(Math.max(0, need.maxMonthlyPayment), Math.max(0, cashFlow.maxSustainablePayment)),
   );
-
-  const referencePrice = Math.max(
-    safeDownPayment,
-    options.referenceVehiclePrice ?? DEFAULT_REFERENCE_VEHICLE_PRICE,
-  );
-  const referenceCosts = calculateOwnershipCosts({
-    listingPrice: referencePrice,
-    mpgCombined: options.referenceMpg ?? DEFAULT_OWNERSHIP_COST_ASSUMPTIONS.defaultMpg,
-    monthlyLoanPayment: 0,
-    downPayment: safeDownPayment,
-    overrides: need.ownershipCostOverrides,
-    assumptions: options.ownershipAssumptions,
-  });
-
-  let maxSustainableLoanPayment = Math.max(0, sustainableMonthlyVehicleCost - referenceCosts.recurringMonthly);
-  let maxAffordableFinancingAmount = principalForPayment(maxSustainableLoanPayment, credit.estimatedApr.min, termMonths);
-  let maxAffordableVehiclePrice = Math.max(0, maxAffordableFinancingAmount + safeDownPayment - referenceCosts.dealerFees);
-
-  // Registration, taxes, and maintenance vary with price. One refinement keeps
-  // the result responsive without pretending these estimates are exact.
-  const refinedCosts = calculateOwnershipCosts({
-    listingPrice: maxAffordableVehiclePrice,
-    mpgCombined: options.referenceMpg ?? DEFAULT_OWNERSHIP_COST_ASSUMPTIONS.defaultMpg,
-    monthlyLoanPayment: 0,
-    downPayment: safeDownPayment,
-    overrides: need.ownershipCostOverrides,
-    assumptions: options.ownershipAssumptions,
-  });
-  maxSustainableLoanPayment = Math.max(0, sustainableMonthlyVehicleCost - refinedCosts.recurringMonthly);
-  maxAffordableFinancingAmount = principalForPayment(maxSustainableLoanPayment, credit.estimatedApr.min, termMonths);
-  maxAffordableVehiclePrice = roundPrice(maxAffordableFinancingAmount + safeDownPayment - refinedCosts.dealerFees);
 
   const indicators: FinancialRiskIndicator[] = [];
   const warnings: string[] = [];
@@ -123,14 +72,9 @@ export function assessAffordability(
     indicators.push(risk("income_variability", "medium", "Income is somewhat variable", "A payment below the ceiling leaves more room for weaker months."));
   }
 
-  if (credit.estimatedApr.max >= 18) {
-    indicators.push(risk("high_apr_estimate", "high", "Estimated APR is high", "The application-generated APR estimate materially increases financing cost; it is not a lender offer."));
-    warnings.push("High estimated APR makes longer terms and expensive vehicles especially risky.");
-  }
-
-  if (maxSustainableLoanPayment <= 0 || maxAffordableVehiclePrice <= 0) {
-    indicators.push(risk("no_vehicle_payment_room", "high", "No sustainable vehicle payment remains", "Estimated ownership costs use the available monthly vehicle-cost ceiling."));
-    warnings.push("No vehicle purchase is financially sustainable under the current inputs.");
+  if (sustainableMonthlyPayment <= 0) {
+    indicators.push(risk("no_vehicle_payment_room", "high", "No monthly payment capacity remains", "The current budget and cash-flow inputs leave no monthly car-payment capacity."));
+    warnings.push("No monthly car-payment capacity remains under the current inputs.");
   }
 
   if (need.maxMonthlyPayment > cashFlow.maxSustainablePayment) {
@@ -142,37 +86,33 @@ export function assessAffordability(
     Number.isFinite(cashFlow.essentialExpenses) &&
     Number.isFinite(cashFlow.existingDebtPayments) &&
     Number.isFinite(cashFlow.savingsBalance) &&
-    credit.estimatedApr.min >= 0 &&
-    credit.estimatedApr.max >= credit.estimatedApr.min
+    Number.isFinite(cashFlow.maxSustainablePayment)
       ? "complete"
       : "limited";
-  if (dataQuality === "limited") warnings.push("Some financial inputs are missing or invalid, so a safe purchase recommendation is unavailable.");
+  if (dataQuality === "limited") warnings.push("Some financial inputs are missing or invalid, so monthly payment capacity cannot be estimated safely.");
 
-  const recommendedPurchase = dataQuality === "complete" && maxAffordableVehiclePrice > 0 && maxSustainableLoanPayment > 0;
-  const summary = recommendedPurchase
-    ? `After essentials, existing debt, ownership-cost estimates, and a ${reserveMonths}-month emergency reserve, an estimated loan payment up to $${roundMoney(maxSustainableLoanPayment)}/mo supports a vehicle price near $${roundPrice(maxAffordableVehiclePrice).toLocaleString()} with the current inputs. Ownership costs are estimates, and the CRS APR range is application-generated, not a lender offer.`
-    : "Based on the current income, expenses, savings, credit estimate, and ownership costs, the engine does not recommend purchasing a vehicle right now.";
+  const hasMonthlyCapacity = dataQuality === "complete" && sustainableMonthlyPayment > 0;
+  const summary = hasMonthlyCapacity
+    ? `Based on recent bank activity and your stated budget, estimated monthly car-payment capacity is $${roundMoney(sustainableMonthlyPayment)}/mo. This is a cash-flow estimate, not a loan offer or vehicle price recommendation.`
+    : "Based on the current income, expenses, and debt information, the engine cannot estimate positive monthly car-payment capacity.";
 
   return {
     statedMonthlyBudget: roundMoney(need.maxMonthlyPayment),
     disposableIncomeAfterEssentialsAndDebt: Math.round(disposableIncome),
     emergencyReserveRequired,
     safeDownPayment,
-    maxSustainableLoanPayment: roundMoney(maxSustainableLoanPayment),
-    sustainableMonthlyVehicleCost,
-    maxAffordableFinancingAmount: roundMoney(maxAffordableFinancingAmount),
-    maxAffordableVehiclePrice,
-    preferredTermMonths: termMonths,
+    sustainableMonthlyPayment,
+    maxSustainableLoanPayment: sustainableMonthlyPayment,
+    sustainableMonthlyVehicleCost: sustainableMonthlyPayment,
     riskIndicators: indicators,
     warnings: [...new Set(warnings)],
     assumptions: [
       `Emergency reserve target is ${reserveMonths} months of essential expenses plus existing debt payments.`,
-      `Reference vehicle price for variable ownership-cost estimates is $${DEFAULT_REFERENCE_VEHICLE_PRICE.toLocaleString()} unless overridden by the caller.`,
-      "Insurance, fuel, maintenance, registration, and taxes are estimates unless the buyer supplies overrides.",
-      "The CRS APR range is application-generated and is not a lender offer or approval.",
+      "No APR, loan term, or vehicle price cap is inferred in this cash-flow assessment.",
+      "The monthly ceiling is an estimate from recent bank activity and the user's stated budget, not a lender decision.",
     ],
     dataQuality,
-    recommendedPurchase,
+    hasMonthlyCapacity,
     summary,
   };
 }

@@ -4,6 +4,7 @@ export interface BuyerNeed {
   timeframeWeeks: number;
   downPayment: number;
   zip: string;
+  searchSortBy?: "deal_score" | "price_asc" | "price_desc" | "mileage_asc" | "year_desc" | "distance";
   ownershipCostOverrides?: OwnershipCostOverrides;
   searchPreferences?: VehicleSearchPreferences;
 }
@@ -29,9 +30,9 @@ export interface VehicleSearchPreferences {
 export type CreditTier =
   | "deep-subprime"
   | "subprime"
-  | "nonprime"
   | "near-prime"
-  | "prime";
+  | "prime"
+  | "super-prime";
 
 export interface CreditFactor {
   label: string;
@@ -67,7 +68,7 @@ export interface CreditReport {
   tierLabel: string;
   scoreRangeLabel: string;
   factors: CreditFactor[];
-  /** Application-generated APR range for the score band — an estimate, not a lender offer or approval. */
+  /** Average used-car APR estimate for the score band; not a lender offer or approval. min/max are equal for this source. */
   estimatedApr: { min: number; max: number };
   /** Hard inquiries in the last 6 months, or null when the report can't tell hard from soft inquiries. */
   hardInquiriesLast6mo: number | null;
@@ -106,6 +107,19 @@ export interface CarListing {
   accentHue: number;
   /** Seller's listing page, when the source provides one (live listings only). */
   listingUrl?: string;
+  distanceMi?: number;
+  dealScore?: number;
+  dealRating?: string;
+  marketPriceDifference?: number;
+  fuelType?: string;
+  carfaxHistory?: {
+    noAccidents?: boolean;
+    oneOwner?: boolean;
+    serviceRecords?: boolean;
+    ownerCount?: number;
+    accidentNotes?: string[];
+    serviceNotes?: string[];
+  };
 }
 
 export interface LoanScenario {
@@ -165,32 +179,46 @@ export interface AffordabilityAssessment {
   disposableIncomeAfterEssentialsAndDebt: number;
   emergencyReserveRequired: number;
   safeDownPayment: number;
+  sustainableMonthlyPayment: number;
+  /** @deprecated Use sustainableMonthlyPayment. */
   maxSustainableLoanPayment: number;
+  /** @deprecated Historical name; this is the monthly payment capacity, not total ownership cost. */
   sustainableMonthlyVehicleCost: number;
-  maxAffordableFinancingAmount: number;
-  maxAffordableVehiclePrice: number;
-  preferredTermMonths: number;
   riskIndicators: FinancialRiskIndicator[];
   warnings: string[];
   assumptions: string[];
   dataQuality: "complete" | "limited";
-  recommendedPurchase: boolean;
+  /** True means a positive monthly cash-flow ceiling could be estimated. */
+  hasMonthlyCapacity: boolean;
   summary: string;
+  /** @deprecated No vehicle-price estimate is produced. */
+  maxAffordableFinancingAmount?: number | null;
+  /** @deprecated No vehicle-price estimate is produced. */
+  maxAffordableVehiclePrice?: number | null;
+  /** @deprecated No preferred loan term is assumed. */
+  preferredTermMonths?: number | null;
+  /** @deprecated Use hasMonthlyCapacity; affordability does not recommend a purchase. */
+  recommendedPurchase?: boolean;
 }
 
 export interface AffordableSearchConstraints {
   zip: string;
   radiusMiles: number | null;
   minPrice: number;
-  maxPrice: number;
-  maxMonthlyLoanPayment: number;
-  maxMonthlyVehicleCost: number;
+  /** Null means no price ceiling was inferred from monthly cash flow. */
+  maxPrice: number | null;
   maxMileage: number | null;
   minYear: number | null;
   vehicleTypes: string[];
-  preferredTermMonths: number;
-  allowedTermsMonths: number[];
   assumptions: string[];
+  /** @deprecated Monthly cash-flow limit is not a loan-payment ceiling. */
+  maxMonthlyLoanPayment?: number;
+  /** @deprecated Cash-flow limit is a payment-capacity estimate, not an all-in cost cap. */
+  maxMonthlyVehicleCost?: number;
+  /** @deprecated No loan term is inferred by the affordability assessment. */
+  preferredTermMonths?: number | null;
+  /** @deprecated Loan-term scenarios are evaluated separately from search constraints. */
+  allowedTermsMonths?: number[];
 }
 
 export interface CarAnalysis {
@@ -208,6 +236,7 @@ export interface RankedCar extends CarAnalysis {
   matchScore: number;
   headline: string;
   explanation: string;
+  ownershipEstimateSource?: "ai" | "app";
 }
 
 export interface DealerPacketTarget {
@@ -244,4 +273,5 @@ export interface PipelineResult {
   rankedCars: RankedCar[];
   dealerPacket: DealerPacket;
   savingsHighlight: SavingsHighlight;
+  rankingSource: "bitdeer" | "bitdeer_with_fallback" | "local_fallback";
 }

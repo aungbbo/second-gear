@@ -11,7 +11,6 @@ export const LIVE_CFG: LiveApifyConfig = {
   token: TEST_TOKEN,
   actorId: "skootle/cars-com-scraper",
   baseUrl: "https://api.apify.test/v2",
-  searchRadius: "50",
   maxItems: 25,
   maxChargeUsd: 0.25,
   timeoutSecs: 120,

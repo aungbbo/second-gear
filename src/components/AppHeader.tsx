@@ -13,10 +13,10 @@ const TABS = [
 ];
 
 const STEPS = [
-  { label: "Tell it what you need", detail: "One sentence about the car and the payment you can live with." },
+  { label: "Tell it what you need", detail: "Preference about the car and the payment you can live with." },
   { label: "Approve a soft credit check", detail: "One tap. It doesn't affect your score." },
   { label: "It does the research", detail: "Credit, cash flow, live listings, and loan math, with no further input." },
-  { label: "Review the real numbers", detail: "Ranked cars with total cost, not just the monthly payment." },
+  { label: "Review the real numbers", detail: "Recommended cars with total cost, not just the monthly payment." },
   { label: "Walk in ready", detail: "A dealer packet with your ceiling and your walk-away price." },
 ];
 

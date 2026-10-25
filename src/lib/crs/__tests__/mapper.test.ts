@@ -6,17 +6,17 @@ import { expectNoLeaks, PII, syntheticP05Report } from "./fixtures";
 const map = (report = syntheticP05Report()) => mapCrsReport(report, { bureau: "experian" });
 
 describe("mapCrsReport — synthetic P05", () => {
-  it("maps score 540 to deep subprime and the app's estimated APR band", () => {
+  it("maps score 540 to the Experian used-car subprime average", () => {
     const credit = map();
     expect(credit).toMatchObject({
       score: 540,
-      tier: "deep-subprime",
-      tierLabel: "Deep subprime",
-      scoreRangeLabel: "300–579",
-      estimatedApr: { min: 18, max: 24 },
+      tier: "subprime",
+      tierLabel: "Subprime",
+      scoreRangeLabel: "501–600",
+      estimatedApr: { min: 19.1, max: 19.1 },
     });
     expect(credit.summary).toContain("Experian soft-pull VantageScore4.0 of 540");
-    expect(credit.summary).toContain("our estimate, not a lender offer or approval");
+    expect(credit.summary).toContain("not a lender offer or approval");
   });
 
   it("never invents a hard-inquiry count", () => {

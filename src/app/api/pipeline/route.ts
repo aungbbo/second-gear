@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { analyzeCars } from "@/lib/analysis";
 import { pullSoftCredit } from "@/lib/providers/crs";
 import { analyzeCashFlow } from "@/lib/providers/nessie";
-import { assertSearchablePlan, searchLiveListings } from "@/lib/providers/apify";
+import { searchLiveListings } from "@/lib/providers/apify";
 import { explainAndRank } from "@/lib/providers/bitdeer";
 import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/consent";
 import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
@@ -17,7 +17,6 @@ import { enforceRateLimits, RateLimitError } from "@/lib/rate-limit";
 import { recordSecurityEvent } from "@/lib/monitoring";
 import { assessAffordability } from "@/lib/affordability/assessment";
 import { buildAffordableSearchConstraints } from "@/lib/affordability/constraints";
-import { getSearchPlanner } from "@/lib/search-plan";
 
 const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   config: 503,
@@ -107,30 +106,25 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    // Step 0: read what the buyer is shopping for. A live search that can't
-    // start (no make) stops here, before the credit pull.
-    const plan = await getSearchPlanner()({ need });
-    assertSearchablePlan(plan);
-
-    // Step 1: soft credit pull, with the verified consent.
+    // Step 1: read the CRS report and banking aggregates for affordability and ranking.
     const credit = await pullSoftCredit(need, consent);
-
-    // Step 2: affordability from cash flow.
     const affordability = await analyzeCashFlow(need, credit);
     const affordabilityAssessment = assessAffordability(need, credit, affordability);
     const searchConstraints = buildAffordableSearchConstraints(need, affordabilityAssessment);
 
-    // Step 3: search live listings.
-    const listings = await searchLiveListings(need, affordability, credit, { constraints: searchConstraints, plan });
+    // Step 2: search with the buyer's ZIP and selected sort order. The remaining
+    // Actor fields are fixed by the app; Bitdeer is reserved for ranking results.
+    const listings = await searchLiveListings(need, affordability, credit, { constraints: searchConstraints });
 
     // Step 4: true-cost loan comparison (plain code).
     const analyses = analyzeCars(listings, affordability, credit, need, affordabilityAssessment);
 
     // Step 5: explain, rank, build dealer packet.
-    const { rankedCars, dealerPacket, savingsHighlight } = await explainAndRank({
+    const { rankedCars, dealerPacket, savingsHighlight, rankingSource } = await explainAndRank({
       need,
       credit,
       affordability,
+      assessment: affordabilityAssessment,
       analyses,
     });
 
@@ -144,6 +138,7 @@ export async function POST(req: NextRequest) {
       rankedCars,
       dealerPacket,
       savingsHighlight,
+      rankingSource,
     };
 
     return NextResponse.json(result);
@@ -177,9 +172,17 @@ function normalizeNeed(raw: unknown): BuyerNeed {
     timeframeWeeks: clampNumber(input.timeframeWeeks, 1, 26, 4),
     downPayment: clampNumber(input.downPayment, 0, 50000, 0),
     zip: typeof input.zip === "string" && /^\d{5}$/.test(input.zip) ? input.zip : "43215",
+    searchSortBy: normalizeSortBy(input.searchSortBy),
     ownershipCostOverrides: normalizeOwnershipCostOverrides(input.ownershipCostOverrides),
     searchPreferences: normalizeSearchPreferences(input.searchPreferences),
   };
+}
+
+function normalizeSortBy(value: unknown): BuyerNeed["searchSortBy"] {
+  const allowed: NonNullable<BuyerNeed["searchSortBy"]>[] = ["deal_score", "price_asc", "price_desc", "mileage_asc", "year_desc", "distance"];
+  return typeof value === "string" && allowed.includes(value as NonNullable<BuyerNeed["searchSortBy"]>)
+    ? value as NonNullable<BuyerNeed["searchSortBy"]>
+    : "deal_score";
 }
 
 function normalizeOwnershipCostOverrides(raw: unknown) {

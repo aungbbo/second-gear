@@ -23,7 +23,7 @@ CRS supplies the credit profile used by the application:
 - Revolving utilization and bureau score factors
 - Inquiry data when the source can distinguish inquiry types
 
-Second Gear derives an APR range from the score and labels it as an application estimate. It is not a lender offer, approval, or guaranteed rate. The integration supports the Experian prequalification sandbox and uses conservative validation for missing pull-type metadata.
+Second Gear maps the CRS score to an Experian credit tier and uses the corresponding average used-car APR from the chart supplied for this project. This is a planning estimate, not a lender offer, approval, or guaranteed rate. The integration supports the Experian prequalification sandbox and uses conservative validation for missing pull-type metadata.
 
 ### 3. Capital One Nessie
 
@@ -55,15 +55,13 @@ It produces:
 
 Ownership costs are kept separate from the loan payment. Configurable estimates can include insurance, fuel, maintenance, registration, taxes, dealer fees, and other recurring costs.
 
-### 5. Bitdeer AI - Search Planning
+### 5. Apify CARFAX Actor
 
-The target Bitdeer planning step interprets the buyer's request and combines soft preferences with the deterministic financial constraints to propose structured search filters for Apify.
+The Apify step retrieves used-car listings with ParseForge's [`parseforge/carfax-scraper`](https://apify.com/parseforge/carfax-scraper) Actor. The user's ZIP is the only variable Actor input; the app sets a 50-mile radius, 25-item limit, and enables vehicle history while disabling dealer-contact, payment-estimate, and standalone price-history extras. The direct `startUrl` is omitted because it overrides the ZIP search. Listings with available accident and ownership history are passed to the results and Bitdeer ranking. See [docs/apify-listings.md](docs/apify-listings.md).
 
-The planner returns a `VehicleSearchPlan` (make, model, body styles, fuel types, minimum year, mileage cap) through the `SearchPlanner` interface in `src/lib/search-plan/`. The current implementation is a deterministic mock that reads only what the buyer wrote; a request without a single make stops a live search with a "tell us which make" message before the credit pull. A plan has no price, ZIP, or radius fields and every plan is normalized before use, so it can only narrow the search and never loosen the affordability engine's limits. See [docs/bitdeer-search-plan.md](docs/bitdeer-search-plan.md) for the Bitdeer handoff contract.
+### 6. Bitdeer AI - Ranking and Reasoning
 
-### 6. Apify Cars.com Actor
-
-The Apify step retrieves used-car listings with the [`skootle/cars-com-scraper`](https://apify.com/skootle/cars-com-scraper) Actor, using the search plan plus the deterministic constraints: ZIP, radius, the assessment's maximum affordable vehicle price, mileage, and model year. When the assessment leaves no room above $3,000, no Actor run is started. A run that returns nothing is reported as inconclusive rather than "no cars for sale", and is not cached.
+Bitdeer runs after Apify returns listings. It receives the CRS and banking summaries, loan calculations, the buyer's priorities, and relevant CARFAX history flags to rank and explain the best candidates. It does not create the Actor input. See [docs/bitdeer-search-plan.md](docs/bitdeer-search-plan.md) for the data flow.
 
 `APIFY_MODE=mock` keeps a seeded deterministic provider for local development and tests; `APIFY_MODE=live` calls the Apify REST API with per-run spend, item, and time caps plus an hourly and daily cost guard. The runtime does not use Apify MCP. See [docs/apify-listings.md](docs/apify-listings.md).
 
@@ -104,8 +102,8 @@ The final result gives the buyer a shortlist, the financial reasoning behind eac
 | CRS Credit API | Implemented with mock and controlled sandbox-live modes |
 | Capital One Nessie | Implemented with mock and sandbox-live modes |
 | Affordability Engine | Implemented as deterministic TypeScript calculations |
-| Apify listings | Implemented with mock and live modes (Cars.com Actor `skootle/cars-com-scraper`) |
-| Bitdeer AI | Deterministic mock search planner and ranking provider; live AI integration is a future integration |
+| Apify listings | Implemented with mock and live modes (CARFAX Actor `parseforge/carfax-scraper`) |
+| Bitdeer AI | Live ranking and reasoning with a deterministic fallback |
 
 ## Getting started
 
@@ -214,7 +212,7 @@ Tests use synthetic or seeded mock data, and a fake Apify API replaying the data
 | `src/lib/nessie/` | Nessie client and cash-flow analysis |
 | `src/lib/affordability/` | Deterministic affordability engine |
 | `src/lib/calculations.ts` | Loan and vehicle calculations |
-| `src/lib/providers/apify.ts` | Listings provider: mock or live Cars.com Actor run |
+| `src/lib/providers/apify.ts` | Listings provider: mock or live CARFAX Actor run |
 | `src/lib/apify/` | Apify client, cost guard, search input, and listing mapper |
 | `src/lib/search-plan/` | `SearchPlanner` interface and mock planner (future Bitdeer handoff) |
 | `src/lib/providers/bitdeer.ts` | Ranking/explanation provider boundary and mock |
@@ -222,16 +220,16 @@ Tests use synthetic or seeded mock data, and a fake Apify API replaying the data
 
 ## Financial assumptions and limitations
 
-- APR ranges are application-generated estimates, not financing offers.
+- Average used-car APRs are planning estimates based on the supplied Experian chart, not financing offers. The chart does not provide term-specific rates, so the same average is used across loan terms.
 - Ownership costs use configurable assumptions when buyer or vehicle-specific values are unavailable.
 - The affordability engine can return no-purchase guidance instead of forcing a minimum payment or vehicle recommendation.
 - CRS and Nessie demo personas are independent simulated identities; they must not be represented as one verified customer.
-- The Bitdeer providers are currently mocks and are not evidence of AI availability. Live Cars.com listings have been verified with one test run; they are a snapshot at search time and can already be sold.
+- Bitdeer ranking uses the configured AI service with a deterministic fallback. CARFAX listings are a point-in-time snapshot and can already be sold; the current Actor integration still needs a live run to validate the response mapping.
 - Turbopack builds can be blocked by restricted deployment environments; the webpack production build is the supported validation path for this repository.
 
 ## Roadmap
 
-- Replace the mock search planner with Bitdeer AI behind the existing `SearchPlanner` interface.
-- Connect Bitdeer ranking and explanations while preserving deterministic affordability gates.
+- Add retries and shared-store cost controls for hosted Apify runs.
+- Expand CARFAX history explanations while preserving deterministic affordability gates.
 - Add richer vehicle-specific ownership-cost inputs and frontend explanations.
 - Expand dealer-packet guidance with verified listing and financing data.

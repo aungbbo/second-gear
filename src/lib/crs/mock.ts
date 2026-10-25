@@ -60,7 +60,7 @@ export async function mockSoftCredit(need: BuyerNeed): Promise<CreditReport> {
     factors,
     estimatedApr: { min: aprMin, max: aprMax },
     hardInquiriesLast6mo: rand.int(1, 4),
-    summary: `Score of ${score} puts you in ${tierLabel.toLowerCase()} territory. Lenders in this range typically price auto loans between ${aprMin}% and ${aprMax}% APR — the single biggest lever on what this car actually costs you.`,
+    summary: `Score of ${score} puts you in the ${tierLabel.toLowerCase()} used-car tier. The average used-car APR shown for this score band is ${aprMin.toFixed(2)}% — a planning estimate based on the provided Experian chart, not a lender offer.`,
   };
 }
 

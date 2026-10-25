@@ -2,24 +2,15 @@ import { ApifyError } from "@/lib/apify/errors";
 
 export const DEFAULT_APIFY_BASE_URL = "https://api.apify.com/v2";
 /**
- * The search input and mapper are written against this Actor's input schema
- * and dataset. It replaced `caffein.dev/autotrader-com-actor`, which stopped
- * extracting listings (run LsvDXEItj2oKxpThV: "__NEXT_DATA__ script tag not found").
+ * The input and mapper target ParseForge's CARFAX listings Actor.
  */
-export const DEFAULT_LISTINGS_ACTOR_ID = "skootle/cars-com-scraper";
-/**
- * Default radii the app offers. The Actor takes any whole number of miles;
- * this list is kept so a typo can't turn into a nationwide search.
- */
-export const SEARCH_RADIUS_OPTIONS = ["10", "25", "50", "100", "200", "500"] as const;
-export type SearchRadius = (typeof SEARCH_RADIUS_OPTIONS)[number];
-
+export const DEFAULT_LISTINGS_ACTOR_ID = "parseforge/carfax-scraper";
 /**
  * Keeps the whole step (start, polling, abort, dataset read) inside the
  * pipeline route's 300 s `maxDuration`.
  */
 const MAX_RUN_TIMEOUT_SECS = 240;
-const MAX_ITEMS_CEILING = 100;
+const MAX_ITEMS_CEILING = 10;
 const MAX_CHARGE_CEILING_USD = 5;
 
 export interface LiveApifyConfig {
@@ -27,7 +18,6 @@ export interface LiveApifyConfig {
   token: string;
   actorId: string;
   baseUrl: string;
-  searchRadius: SearchRadius;
   maxItems: number;
   maxChargeUsd: number;
   timeoutSecs: number;
@@ -77,12 +67,8 @@ export function getApifyConfig(env: Record<string, string | undefined> = process
   const actorId = env.APIFY_LISTINGS_ACTOR_ID?.trim() || DEFAULT_LISTINGS_ACTOR_ID;
   if (!/^[\w.-]+[/~][\w.-]+$/.test(actorId)) throw configError("APIFY_LISTINGS_ACTOR_ID must look like owner/actor-name");
 
-  const radius = env.APIFY_SEARCH_RADIUS_MILES?.trim() || "50";
-  if (!(SEARCH_RADIUS_OPTIONS as readonly string[]).includes(radius)) {
-    throw configError(`APIFY_SEARCH_RADIUS_MILES must be one of ${SEARCH_RADIUS_OPTIONS.join(", ")}`);
-  }
-
-  const maxChargeUsd = usdSetting(env, "APIFY_MAX_CHARGE_USD", 0.25, MAX_CHARGE_CEILING_USD);
+  // CARFAX Actor charges about $0.03066 per listing; $1 permits the configured 10-item pull.
+  const maxChargeUsd = usdSetting(env, "APIFY_MAX_CHARGE_USD", 1, MAX_CHARGE_CEILING_USD);
   const dailyBudgetUsd = usdSetting(env, "APIFY_DAILY_BUDGET_USD", 2, 100);
   if (dailyBudgetUsd < maxChargeUsd) throw configError("APIFY_DAILY_BUDGET_USD must be at least APIFY_MAX_CHARGE_USD");
 
@@ -91,10 +77,9 @@ export function getApifyConfig(env: Record<string, string | undefined> = process
     token,
     actorId,
     baseUrl: (env.APIFY_BASE_URL?.trim() || DEFAULT_APIFY_BASE_URL).replace(/\/+$/, ""),
-    searchRadius: radius as SearchRadius,
-    maxItems: intSetting(env, "APIFY_MAX_ITEMS", 25, MAX_ITEMS_CEILING),
+    maxItems: intSetting(env, "APIFY_MAX_ITEMS", 10, MAX_ITEMS_CEILING),
     maxChargeUsd,
-    timeoutSecs: intSetting(env, "APIFY_RUN_TIMEOUT_SECS", 120, MAX_RUN_TIMEOUT_SECS),
+    timeoutSecs: intSetting(env, "APIFY_RUN_TIMEOUT_SECS", 240, MAX_RUN_TIMEOUT_SECS),
     maxRunsPerHour: intSetting(env, "APIFY_MAX_RUNS_PER_HOUR", 10, 1000),
     dailyBudgetUsd,
     maxConcurrentRuns: intSetting(env, "APIFY_MAX_CONCURRENT_RUNS", 2, 10),

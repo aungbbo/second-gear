@@ -249,6 +249,6 @@ export function mapCrsReport(
     insights,
     estimatedApr: { min: aprMin, max: aprMax },
     hardInquiriesLast6mo: null,
-    summary: `${BUREAU_LABELS[context.bureau]} soft-pull ${scrubCrsDetail(model)} of ${score} puts you in ${tierLabel.toLowerCase()} territory. For this score band, Second Gear estimates auto loans at ${aprMin}% to ${aprMax}% APR — our estimate, not a lender offer or approval.`,
+    summary: `${BUREAU_LABELS[context.bureau]} soft-pull ${scrubCrsDetail(model)} of ${score} puts you in the ${tierLabel.toLowerCase()} used-car tier. The average used-car APR shown for this score band is ${aprMin.toFixed(2)}% — a planning estimate based on the provided Experian chart, not a lender offer or approval.`,
   };
 }

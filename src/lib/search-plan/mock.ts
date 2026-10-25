@@ -69,6 +69,13 @@ export const mockSearchPlanner: SearchPlanner = async ({ need }) => {
     fuelTypes,
     minYear: detectMinYear(text) ?? null,
     maxMileage: detectMaxMileage(text) ?? null,
+    sortBy: /price\s*:\s*low to high/.test(text) ? "price_asc"
+      : /price\s*:\s*high to low/.test(text) ? "price_desc"
+        : /mileage\s*:\s*low to high/.test(text) ? "mileage_asc"
+          : /year\s*:\s*newest first/.test(text) ? "year_desc"
+            : /distance\s*:\s*nearest first/.test(text) ? "distance"
+              : "deal_score",
+    reason: "Search criteria follow the vehicle needs you described; results are sorted by your top priority.",
   };
   return plan;
 };

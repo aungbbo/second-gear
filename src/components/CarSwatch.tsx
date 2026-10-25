@@ -4,21 +4,22 @@ interface CarSwatchProps {
   make: string;
   model: string;
   hue: number;
-  size?: "sm" | "md" | "banner";
+  size?: "sm" | "md" | "listing";
 }
 
 export function CarSwatch({ make, model, hue, size = "md" }: CarSwatchProps) {
   const initials = `${make[0]}${model[0]}`.toUpperCase();
   const gradient = `linear-gradient(155deg, hsl(${hue} 38% 34%), hsl(${(hue + 28) % 360} 42% 24%))`;
 
-  if (size === "banner") {
+  if (size === "listing") {
     return (
       <div
-        className="w-full h-36 rounded-t-2xl flex items-center justify-center"
+        className="flex h-full min-h-0 w-full flex-col items-center justify-center gap-3 px-5 py-6 text-center"
         style={{ background: gradient }}
         aria-hidden="true"
       >
-        <Car className="w-12 h-12 text-cream/70" strokeWidth={1.5} />
+        <Car className="h-14 w-14 text-cream/80" strokeWidth={1.4} />
+        <span className="font-display text-sm font-semibold tracking-wide text-cream/90">{make} {model}</span>
       </div>
     );
   }

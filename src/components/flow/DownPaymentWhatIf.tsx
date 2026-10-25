@@ -43,7 +43,7 @@ export function DownPaymentWhatIf({ car, credit, affordability }: DownPaymentWha
           <div>
             <p className="font-medium">Down payment what-if</p>
             <p className="text-xs text-ink-soft">
-              Est. {before.apr}% APR · {before.termMonths} months · {car.listing.year} {car.listing.make} {car.listing.model}
+              Est. {before.apr.toFixed(2)}% APR · {before.termMonths} months · {car.listing.year} {car.listing.make} {car.listing.model}
             </p>
           </div>
         </div>

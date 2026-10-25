@@ -1,9 +1,8 @@
 import type { CreditTier } from "@/lib/types";
 
 /**
- * Score band → tier and an application-generated APR range. The APR range is
- * Second Gear's own estimate for the band, not a lender offer or approval.
- * Moved verbatim from providers/crs.ts.
+ * Score band → Experian tier and average used-car APR from the chart provided
+ * for this app. The APR is a market average estimate, not a lender offer.
  */
 export function classify(score: number): {
   tier: CreditTier;
@@ -12,47 +11,47 @@ export function classify(score: number): {
   aprMin: number;
   aprMax: number;
 } {
-  if (score < 580) {
+  if (score <= 500) {
     return {
       tier: "deep-subprime",
       tierLabel: "Deep subprime",
-      scoreRangeLabel: "300–579",
-      aprMin: 18,
-      aprMax: 24,
+      scoreRangeLabel: "300–500",
+      aprMin: 21.62,
+      aprMax: 21.62,
     };
   }
-  if (score < 620) {
+  if (score <= 600) {
     return {
       tier: "subprime",
       tierLabel: "Subprime",
-      scoreRangeLabel: "580–619",
-      aprMin: 15,
-      aprMax: 20,
+      scoreRangeLabel: "501–600",
+      aprMin: 19.1,
+      aprMax: 19.1,
     };
   }
-  if (score < 660) {
-    return {
-      tier: "nonprime",
-      tierLabel: "Nonprime",
-      scoreRangeLabel: "620–659",
-      aprMin: 11,
-      aprMax: 16,
-    };
-  }
-  if (score < 700) {
+  if (score <= 660) {
     return {
       tier: "near-prime",
-      tierLabel: "Near-prime",
-      scoreRangeLabel: "660–699",
-      aprMin: 8,
-      aprMax: 12,
+      tierLabel: "Near prime",
+      scoreRangeLabel: "601–660",
+      aprMin: 13.93,
+      aprMax: 13.93,
+    };
+  }
+  if (score <= 780) {
+    return {
+      tier: "prime",
+      tierLabel: "Prime",
+      scoreRangeLabel: "661–780",
+      aprMin: 8.81,
+      aprMax: 8.81,
     };
   }
   return {
-    tier: "prime",
-    tierLabel: "Prime",
-    scoreRangeLabel: "700+",
-    aprMin: 5,
-    aprMax: 8,
+    tier: "super-prime",
+    tierLabel: "Super prime",
+    scoreRangeLabel: "781+",
+    aprMin: 6.29,
+    aprMax: 6.29,
   };
 }
