@@ -5,7 +5,7 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 ## Product workflow
 
 <p align="center">
-  <img src="src/img/workflow.png" alt="Second Gear product workflow" height="720">
+  <img src="src/img/workfloww.png" alt="Second Gear product workflow" height="720">
 </p>
 
 ### 1. Buyer - Next.js UI
