@@ -254,6 +254,12 @@ async function callBitdeerRanking(params: {
     })),
   };
 
+  // This payload contains credit and banking aggregates. Keep the diagnostic
+  // available in local development without writing that data to production logs.
+  if (process.env.NODE_ENV === "development") {
+    console.info("[bitdeer] model input:", JSON.stringify(userPayload, null, 2));
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), BITDEER_TIMEOUT_MS);
 

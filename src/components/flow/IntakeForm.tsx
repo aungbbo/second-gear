@@ -39,7 +39,7 @@ const PRIORITY_SORT: Record<(typeof PRIORITIES)[number], NonNullable<BuyerNeed["
 };
 
 export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
-  const [budget, setBudget] = useState(initial.maxMonthlyPayment > 0 ? initial.maxMonthlyPayment : 400);
+  const [budget, setBudget] = useState(() => Math.min(2000, Math.max(400, initial.maxMonthlyPayment || 400)));
   const [carType, setCarType] = useState<(typeof CAR_TYPES)[number] | null>(null);
   const [timeframe, setTimeframe] = useState(() => TIMEFRAMES.find((tf) => tf.weeks === initial.timeframeWeeks) ?? null);
   const [commute, setCommute] = useState("");
@@ -52,7 +52,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
   const formReady =
     budget !== null &&
     Number.isFinite(budget) &&
-    budget >= 100 &&
+    budget >= 400 &&
     carType !== null &&
     timeframe !== null &&
     commute !== "" &&
@@ -89,7 +89,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
         <Slider
           label="Monthly total cost target"
           value={budget}
-          min={100}
+          min={400}
           max={2000}
           step={10}
           onChange={setBudget}

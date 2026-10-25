@@ -168,7 +168,7 @@ function normalizeNeed(raw: unknown): BuyerNeed {
   const input = (raw ?? {}) as Partial<BuyerNeed>;
   return {
     description: typeof input.description === "string" ? input.description.trim().slice(0, 300) : "",
-    maxMonthlyPayment: clampNumber(input.maxMonthlyPayment, 100, 2000, 400),
+    maxMonthlyPayment: clampNumber(input.maxMonthlyPayment, 400, 2000, 400),
     timeframeWeeks: clampNumber(input.timeframeWeeks, 1, 26, 4),
     downPayment: clampNumber(input.downPayment, 0, 50000, 0),
     zip: typeof input.zip === "string" && /^\d{5}$/.test(input.zip) ? input.zip : "43215",
