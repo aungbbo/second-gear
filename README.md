@@ -4,33 +4,7 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 
 ## Product workflow
 
-```mermaid
-%%{init: {"htmlLabels": true, "flowchart": {"nodeSpacing": 60, "rankSpacing": 70, "wrappingWidth": 180, "minNodeWidth": 220, "padding": 20}, "themeVariables": {"fontSize": "16px"}}}%%
-flowchart TD
-    A["Buyer<br/>Next.js UI<br/>Request +<br/>consent"]
-    B["CRS credit<br/>API<br/>Credit profile<br/>Estimated APR"]
-    C["Capital One<br/>Nessie<br/>Income + debt<br/>Expenses"]
-    D["Affordability<br/>engine<br/>Safe payment<br/>Max car price"]
-    E["Bitdeer AI<br/>Search<br/>Preferences<br/>+ filters"]
-    F["Apify<br/>AutoTrader<br/>Used-car<br/>listings"]
-    G["Loan +<br/>ownership<br/>Payment + cost<br/>Negative equity"]
-    H["Bitdeer AI<br/>Explain + rank<br/>Recommendations<br/>Negotiation"]
-    I["Ranked cars<br/>Dealer packet<br/>Talking points<br/>Next steps"]
-
-    A --> B
-    A --> C
-    B --> D
-    C --> D
-    D --> E
-    E --> F
-    F --> G
-    D --> G
-    G --> H
-    H --> I
-
-    classDef centered text-align:center;
-    class A,B,C,D,E,F,G,H,I centered;
-```
+![Second Gear product workflow](src/img/workflow.png)
 
 ### 1. Buyer - Next.js UI
 
