@@ -1,5 +1,7 @@
 import type { LiveApifyConfig } from "@/lib/apify/config";
-import type { AffordabilityResult, BuyerNeed, CreditReport } from "@/lib/types";
+import type { VehicleSearchPlan } from "@/lib/search-plan";
+import type { AffordabilityResult, AffordableSearchConstraints, BuyerNeed, CreditReport } from "@/lib/types";
+import { CARS_COM_RUN_ITEMS } from "./carscom-run";
 
 /** Synthetic token in Apify's format; never a real one. */
 export const TEST_TOKEN = "apify_api_TESTtokenTESTtokenTESTtoken0000";
@@ -7,7 +9,7 @@ export const TEST_TOKEN = "apify_api_TESTtokenTESTtokenTESTtoken0000";
 export const LIVE_CFG: LiveApifyConfig = {
   mode: "live",
   token: TEST_TOKEN,
-  actorId: "caffein.dev/autotrader-com-actor",
+  actorId: "skootle/cars-com-scraper",
   baseUrl: "https://api.apify.test/v2",
   searchRadius: "50",
   maxItems: 25,
@@ -20,7 +22,7 @@ export const LIVE_CFG: LiveApifyConfig = {
 };
 
 export const NEED: BuyerNeed = {
-  description: "A reliable car to commute, nothing fancy.",
+  description: "A reliable used Toyota Corolla to commute, nothing fancy.",
   maxMonthlyPayment: 400,
   timeframeWeeks: 4,
   downPayment: 0,
@@ -51,29 +53,55 @@ export const CREDIT: CreditReport = {
   summary: "test",
 };
 
-/** Shaped like the Actor's declared dataset schema; all values synthetic. */
-export function autotraderItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-  return {
-    listingId: "700000001",
-    vin: "1hgcv1f30la000001",
-    url: "https://www.autotrader.com/cars-for-sale/vehicledetails.xhtml?listingId=700000001",
-    title: "Used 2019 Honda Civic LX",
-    year: 2019,
-    make: "Honda",
-    model: "Civic",
-    trim: "LX",
-    bodyStyle: "Sedan",
-    salePrice: 15995,
-    mileage: 48210,
-    mpgCity: 30,
-    mpgHighway: 38,
-    listingType: "USED",
-    daysOnSite: 12,
-    sellerName: "Example Motors",
-    sellerPhone: "555-0100",
-    sellerCity: "Columbus",
-    sellerState: "OH",
-    images: ["https://images.example/1.jpg"],
-    ...overrides,
-  };
+/** Deterministic limits as the assessment would produce them: a $17,000 ceiling, no buyer radius or year/mileage preference. */
+export const CONSTRAINTS: AffordableSearchConstraints = {
+  zip: "95823",
+  radiusMiles: null,
+  minPrice: 0,
+  maxPrice: 17000,
+  maxMonthlyLoanPayment: 320,
+  maxMonthlyVehicleCost: 520,
+  maxMileage: null,
+  minYear: null,
+  vehicleTypes: [],
+  preferredTermMonths: 60,
+  allowedTermsMonths: [36, 48, 60, 72],
+  assumptions: [],
+};
+
+/**
+ * Cash flow that leaves room for a car: with NEED at $800/month in 95823 the
+ * assessment's maximum affordable vehicle price is $18,700, above all five
+ * listings of the real run. (AFFORDABILITY leaves only $2,100, below the
+ * $3,000 minimum, so a live search with it never starts.)
+ */
+export const ROOMY_AFFORDABILITY: AffordabilityResult = {
+  ...AFFORDABILITY,
+  avgMonthlyIncome: 8000,
+  essentialExpenses: 2800,
+  discretionaryBuffer: 5020,
+  maxSustainablePayment: 900,
+  recommendedPayment: 850,
+  savingsBalance: 15000,
+  cashAvailableForDown: 5000,
+};
+export const ROOMY_NEED: BuyerNeed = { ...NEED, maxMonthlyPayment: 800, zip: "95823" };
+
+/** What the mock planner reads from NEED's description. */
+export const PLAN: VehicleSearchPlan = {
+  source: "mock",
+  make: "Toyota",
+  model: "Corolla",
+  bodyStyles: [],
+  fuelTypes: [],
+  minYear: null,
+  maxMileage: null,
+};
+
+/** Clock pinned to the real run's scrape time (2026-10-25T03:54:38Z). */
+export const RUN_NOW = Date.parse("2026-10-25T03:54:38.333Z");
+
+/** A real item from the Cars.com test run (the 2020 Corolla LE in ZIP 95823), with overrides. */
+export function carsComItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { ...structuredClone(CARS_COM_RUN_ITEMS[3]), ...overrides };
 }

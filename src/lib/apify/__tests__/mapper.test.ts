@@ -1,37 +1,67 @@
 import { describe, expect, it } from "vitest";
-import { combinedMpg, hueFor, isUsedListing, mapListings, reliabilityFor, safeListingUrl, UNRATED_RELIABILITY } from "@/lib/apify/mapper";
-import { autotraderItem } from "./fixtures";
+import { combinedMpg, daysSince, hueFor, mapListings, reliabilityFor, safeListingUrl, UNRATED_RELIABILITY } from "@/lib/apify/mapper";
+import { CARS_COM_RUN_ITEMS } from "./carscom-run";
+import { carsComItem, RUN_NOW } from "./fixtures";
+
+const map = (items: unknown[], options = {}) => mapListings(items, { now: RUN_NOW, ...options });
 
 describe("mapListings", () => {
-  it("maps a complete item to CarListing", () => {
-    const { listings, stats } = mapListings([autotraderItem()]);
-    expect(listings).toEqual([
-      {
-        id: "at_700000001",
-        year: 2019,
-        make: "Honda",
-        model: "Civic",
-        trim: "LX",
-        bodyStyle: "Sedan",
-        price: 15995,
-        mileage: 48210,
-        dealerName: "Example Motors",
-        city: "Columbus",
-        state: "OH",
-        daysOnMarket: 12,
-        mpgCombined: 33,
-        reliabilityScore: 5,
-        vin: "1HGCV1F30LA000001",
-        accentHue: hueFor("700000001"),
-        listingUrl: "https://www.autotrader.com/cars-for-sale/vehicledetails.xhtml?listingId=700000001",
-      },
+  it("maps all five listings from the real Cars.com run", () => {
+    const { listings, stats } = map(CARS_COM_RUN_ITEMS);
+    expect(stats).toEqual({ received: 5, mapped: 5, incomplete: 0, filtered: 0, noMpg: 0, duplicates: 0 });
+    expect(listings.map((l) => [l.year, l.trim, l.price, l.mileage, l.mpgCombined, l.city, l.state])).toEqual([
+      [2021, "LE", 16998, 97590, 33, "Roseville", "CA"],
+      [2017, "L", 15998, 98223, 31, "Stockton", "CA"],
+      // mpgCity and mpgHighway are null on this one: the catalog's Corolla figure stands in.
+      [2017, "XLE", 16903, 65000, 35, "Sacramento", "CA"],
+      [2020, "LE", 14860, 83705, 33, "Sacramento", "CA"],
+      [2019, "LE", 15588, 79067, 31, "Sacramento", "CA"],
     ]);
-    expect(stats).toEqual({ received: 1, mapped: 1, incomplete: 0, notUsed: 0, noMpg: 0, duplicates: 0 });
+    for (const l of listings) {
+      expect(l.listingUrl).toMatch(/^https:\/\/www\.cars\.com\/vehicledetail\/[0-9a-f-]+\/$/);
+      expect(l.vin).toMatch(/^[A-HJ-NPR-Z0-9]{17}$/);
+      expect(l.make).toBe("Toyota");
+      expect(l.bodyStyle).toBe("Sedan");
+    }
   });
 
-  it("never copies seller contact details or images", () => {
-    const json = JSON.stringify(mapListings([autotraderItem()]).listings);
+  it("maps a complete item to CarListing", () => {
+    const { listings } = map([carsComItem({ listedAt: "2026-10-02T10:41:10Z" })]);
+    expect(listings).toEqual([
+      {
+        id: "cc_e3cfc9e8-11d9-4d4c-9272-fa995a6d3ef4",
+        year: 2020,
+        make: "Toyota",
+        model: "Corolla",
+        trim: "LE",
+        bodyStyle: "Sedan",
+        price: 14860,
+        mileage: 83705,
+        dealerName: "National Autos Sales",
+        city: "Sacramento",
+        state: "CA",
+        daysOnMarket: 22,
+        mpgCombined: 33,
+        reliabilityScore: 5,
+        vin: "5YFEPRAE4LP030872",
+        accentHue: hueFor("e3cfc9e8-11d9-4d4c-9272-fa995a6d3ef4"),
+        listingUrl: "https://www.cars.com/vehicledetail/e3cfc9e8-11d9-4d4c-9272-fa995a6d3ef4/",
+      },
+    ]);
+  });
+
+  it("reads the numeric price and mileage, never the string copies", () => {
+    const { listings, stats } = map([carsComItem({ priceUsd: null, price: "14860" })]);
+    expect(listings).toHaveLength(0);
+    expect(stats.incomplete).toBe(1);
+    expect(map([carsComItem({ mileageMiles: "83705" })]).stats.incomplete).toBe(1);
+  });
+
+  it("never copies dealer contact details or images", () => {
+    const item = carsComItem({ images: ["https://images.example/1.jpg"], dealer: { ...(carsComItem().dealer as object), phone: "555-0100", address: "1 Main St" } });
+    const json = JSON.stringify(map([item]).listings);
     expect(json).not.toContain("555-0100");
+    expect(json).not.toContain("1 Main St");
     expect(json).not.toContain("images.example");
   });
 
@@ -41,74 +71,89 @@ describe("mapListings", () => {
     ["year", 1985],
     ["make", ""],
     ["model", null],
-    ["salePrice", null],
-    ["salePrice", 0],
-    ["mileage", null],
-    ["mileage", -1],
-    ["sellerCity", null],
-    ["sellerState", null],
+    ["priceUsd", null],
+    ["priceUsd", 0],
+    ["mileageMiles", null],
+    ["mileageMiles", -1],
+    ["dealer", null],
+    ["dealer", { name: "X", city: null, state: "CA" }],
+    ["dealer", { name: "X", city: "Sacramento", state: "" }],
   ])("drops an item whose %s is %j instead of guessing", (field, value) => {
-    const { listings, stats } = mapListings([autotraderItem({ [field]: value })]);
+    const { listings, stats } = map([carsComItem({ [field]: value })]);
     expect(listings).toHaveLength(0);
     expect(stats.incomplete).toBe(1);
   });
 
   it("drops non-object items", () => {
-    expect(mapListings([null, "x", 3]).stats.incomplete).toBe(3);
+    expect(map([null, "x", 3]).stats.incomplete).toBe(3);
   });
 
-  it("keeps used and certified pre-owned listings, and drops new ones", () => {
-    for (const listingType of ["USED", "CERTIFIED", "3P_CERT", "certified"]) {
-      expect(mapListings([autotraderItem({ listingType })]).listings).toHaveLength(1);
-    }
-    for (const listingType of ["NEW", "LEASE"]) {
-      expect(mapListings([autotraderItem({ listingType })]).stats.notUsed).toBe(1);
-    }
+  it("drops listings below the minimum price", () => {
+    const { listings, stats } = map([carsComItem({ priceUsd: 2500 }), carsComItem({ listingId: "2", vin: null })], { minPrice: 3000 });
+    expect(listings).toHaveLength(1);
+    expect(stats.filtered).toBe(1);
   });
 
-  it("falls back to the title when the listing type is missing", () => {
-    expect(mapListings([autotraderItem({ listingType: null, title: "New 2026 Honda Civic LX" })]).stats.notUsed).toBe(1);
-    expect(mapListings([autotraderItem({ listingType: null, title: "Certified 2019 Honda Civic LX" })]).listings).toHaveLength(1);
-    expect(mapListings([autotraderItem({ listingType: null, title: null })]).listings).toHaveLength(1);
+  it("keeps only the plan's body styles and fuel types", () => {
+    const items = [
+      carsComItem(),
+      carsComItem({ listingId: "2", vin: null, bodyStyle: "Hatchback" }),
+      carsComItem({ listingId: "3", vin: null, fuelType: "Hybrid" }),
+      carsComItem({ listingId: "4", vin: null, fuelType: null }),
+    ];
+    expect(map(items, { bodyStyles: ["sedan"] }).listings.map((l) => l.id)).toEqual(["cc_e3cfc9e8-11d9-4d4c-9272-fa995a6d3ef4", "cc_3", "cc_4"]);
+    const hybrids = map(items, { fuelTypes: ["hybrid"] });
+    expect(hybrids.listings.map((l) => l.id)).toEqual(["cc_3"]);
+    expect(hybrids.stats.filtered).toBe(3);
   });
 
-  it("omits the listing URL when it is missing or not an https AutoTrader link", () => {
-    for (const url of [null, "", "http://www.autotrader.com/x", "https://autotrader.com.evil.test/x", "javascript:alert(1)"]) {
-      expect(mapListings([autotraderItem({ url })]).listings[0]).not.toHaveProperty("listingUrl");
+  it("omits the listing URL when it is missing or not an https Cars.com link", () => {
+    for (const listingUrl of [null, "", "http://www.cars.com/x", "https://cars.com.evil.test/x", "https://www.autotrader.com/x", "javascript:alert(1)"]) {
+      expect(map([carsComItem({ listingUrl })]).listings[0]).not.toHaveProperty("listingUrl");
     }
   });
 
   it("falls back to the catalog MPG, and drops items with no MPG anywhere", () => {
-    const fromCatalog = mapListings([autotraderItem({ mpgCity: null, mpgHighway: null })]);
-    expect(fromCatalog.listings[0].mpgCombined).toBe(34);
+    const fromCatalog = map([carsComItem({ mpgCity: null, mpgHighway: null })]);
+    expect(fromCatalog.listings[0].mpgCombined).toBe(35);
 
-    const unknown = mapListings([autotraderItem({ make: "Rivian", model: "R1T", mpgCity: null, mpgHighway: null })]);
+    const unknown = map([carsComItem({ make: "Rivian", model: "R1T", mpgCity: null, mpgHighway: null })]);
     expect(unknown.listings).toHaveLength(0);
     expect(unknown.stats.noMpg).toBe(1);
   });
 
   it("drops duplicates by listing id and by VIN", () => {
-    const { listings, stats } = mapListings([
-      autotraderItem(),
-      autotraderItem(),
-      autotraderItem({ listingId: "700000002", vin: "1HGCV1F30LA000001" }),
-      autotraderItem({ listingId: "700000003", vin: null }),
+    const { listings, stats } = map([
+      carsComItem(),
+      carsComItem(),
+      carsComItem({ listingId: "2", vin: "5yfeprae4lp030872" }),
+      carsComItem({ listingId: "3", vin: null }),
     ]);
-    expect(listings.map((l) => l.id)).toEqual(["at_700000001", "at_700000003"]);
+    expect(listings.map((l) => l.id)).toEqual(["cc_e3cfc9e8-11d9-4d4c-9272-fa995a6d3ef4", "cc_3"]);
     expect(stats.duplicates).toBe(2);
   });
 
   it("fills optional fields conservatively", () => {
-    const [listing] = mapListings([
-      autotraderItem({ trim: null, bodyStyle: null, sellerName: null, daysOnSite: null, vin: null, listingId: 42 }),
+    const [listing] = map([
+      carsComItem({ trim: null, bodyStyle: null, dealer: { city: "Sacramento", state: "CA" }, listedAt: null, vin: null, listingId: 42 }),
     ]).listings;
-    expect(listing).toMatchObject({ id: "at_42", trim: "", bodyStyle: "Sedan", dealerName: "Private seller", daysOnMarket: 0, vin: "" });
+    expect(listing).toMatchObject({ id: "cc_42", trim: "", bodyStyle: "Sedan", dealerName: "Private seller", daysOnMarket: 0, vin: "" });
   });
 
   it("rounds prices and mileage", () => {
-    const [listing] = mapListings([autotraderItem({ salePrice: 15995.6, mileage: 48210.4 })]).listings;
+    const [listing] = map([carsComItem({ priceUsd: 15995.6, mileageMiles: 48210.4 })]).listings;
     expect(listing.price).toBe(15996);
     expect(listing.mileage).toBe(48210);
+  });
+});
+
+describe("daysSince", () => {
+  it("counts whole days, and ignores missing, unparsable, or future dates", () => {
+    expect(daysSince("2026-10-24T03:54:38Z", RUN_NOW)).toBe(1);
+    expect(daysSince("2026-10-25T03:00:00Z", RUN_NOW)).toBe(0);
+    expect(daysSince(undefined, RUN_NOW)).toBeUndefined();
+    expect(daysSince("soon", RUN_NOW)).toBeUndefined();
+    expect(daysSince("2026-12-01T00:00:00Z", RUN_NOW)).toBeUndefined();
   });
 });
 
@@ -125,25 +170,16 @@ describe("combinedMpg", () => {
   });
 
   it("keeps a car outside the catalog that lists only city MPG", () => {
-    const [listing] = mapListings([autotraderItem({ make: "Jeep", model: "Compass", mpgHighway: null, mpgCity: 24 })]).listings;
+    const [listing] = map([carsComItem({ make: "Jeep", model: "Compass", mpgHighway: null, mpgCity: 24 })]).listings;
     expect(listing.mpgCombined).toBe(24);
   });
 });
 
-describe("isUsedListing", () => {
-  it("accepts AutoTrader's used types only", () => {
-    expect(isUsedListing("USED", undefined)).toBe(true);
-    expect(isUsedListing("3P_CERT", undefined)).toBe(true);
-    expect(isUsedListing("NEW", "Used 2019 Honda Civic")).toBe(false);
-    expect(isUsedListing(undefined, "New 2026 Honda Civic")).toBe(false);
-    expect(isUsedListing(undefined, "Newport Blue 2019 Civic")).toBe(true);
-  });
-});
-
 describe("safeListingUrl", () => {
-  it("accepts https AutoTrader links and strips credentials", () => {
-    expect(safeListingUrl("https://www.autotrader.com/a?listingId=1")).toBe("https://www.autotrader.com/a?listingId=1");
-    expect(safeListingUrl("https://user:pw@autotrader.com/a")).toBe("https://autotrader.com/a");
+  it("accepts https Cars.com links and strips credentials", () => {
+    expect(safeListingUrl("https://www.cars.com/vehicledetail/abc/")).toBe("https://www.cars.com/vehicledetail/abc/");
+    expect(safeListingUrl("https://user:pw@cars.com/a")).toBe("https://cars.com/a");
+    expect(safeListingUrl("https://notcars.com/a")).toBeUndefined();
     expect(safeListingUrl("not a url")).toBeUndefined();
   });
 });

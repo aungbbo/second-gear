@@ -1,6 +1,6 @@
 import type { LiveApifyConfig } from "@/lib/apify/config";
 import { ApifyError, LISTINGS_TIMEOUT, LISTINGS_UNAVAILABLE } from "@/lib/apify/errors";
-import type { AutotraderSearchInput } from "@/lib/apify/types";
+import type { CarsComSearchInput } from "@/lib/apify/types";
 
 /** Apify holds a start or status request open for at most 60 s. */
 const MAX_WAIT_SECS = 60;
@@ -95,7 +95,7 @@ function runInfo(json: unknown): RunInfo {
  * spend, and run time are capped on Apify's side on every run. Never
  * retried: each run is billed.
  */
-export async function runListingsActor(cfg: LiveApifyConfig, input: AutotraderSearchInput): Promise<ActorRunResult> {
+export async function runListingsActor(cfg: LiveApifyConfig, input: CarsComSearchInput): Promise<ActorRunResult> {
   const deadline = Date.now() + cfg.timeoutSecs * 1000 + ABORT_GRACE_MS;
   const waitFor = () => Math.max(0, Math.min(MAX_WAIT_SECS, Math.ceil((deadline - Date.now()) / 1000)));
 

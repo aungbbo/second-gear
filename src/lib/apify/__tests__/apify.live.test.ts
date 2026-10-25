@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { getApifyConfig } from "@/lib/apify/config";
 import { searchLiveListings } from "@/lib/providers/apify";
-import { AFFORDABILITY, CREDIT, NEED } from "./fixtures";
+import { AFFORDABILITY, CONSTRAINTS, CREDIT, NEED } from "./fixtures";
 
 /**
  * ONE billed run of the real listings Actor (10 listings, $0.10 cap). Opt in with:
@@ -13,16 +13,16 @@ describe.skipIf(process.env.APIFY_LIVE_TEST !== "1")("Apify listings Actor (live
     process.env.APIFY_MAX_CHARGE_USD = "0.1";
     if (getApifyConfig().mode !== "live") throw new Error("APIFY_LIVE_TEST=1 requires APIFY_MODE=live");
 
-    const listings = await searchLiveListings(NEED, AFFORDABILITY, CREDIT);
+    const listings = await searchLiveListings({ ...NEED, zip: CONSTRAINTS.zip }, AFFORDABILITY, CREDIT, { constraints: CONSTRAINTS });
 
     expect(listings.length).toBeGreaterThan(0);
     for (const l of listings) {
-      expect(l.id).toMatch(/^at_/);
+      expect(l.id).toMatch(/^cc_/);
       expect(l.price).toBeGreaterThan(0);
       expect(l.mileage).toBeGreaterThanOrEqual(0);
       expect(l.mpgCombined).toBeGreaterThan(0);
       expect(l.city && l.state).toBeTruthy();
-      if (l.listingUrl !== undefined) expect(l.listingUrl).toMatch(/^https:\/\/([a-z0-9-]+\.)*autotrader\.com\//);
+      if (l.listingUrl !== undefined) expect(l.listingUrl).toMatch(/^https:\/\/([a-z0-9-]+\.)*cars\.com\//);
     }
     // Prints only counts and the shape the mapper relies on, no listing details.
     console.log(`[apify live] ${listings.length} listings, ${listings.filter((l) => l.listingUrl).length} with links`);
