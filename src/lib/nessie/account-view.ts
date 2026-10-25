@@ -1,4 +1,5 @@
 import type { NessieSnapshot } from "@/lib/nessie/types";
+import { creationRank } from "@/lib/nessie/write-order";
 
 export interface AccountSummaryView {
   type: string;
@@ -8,6 +9,14 @@ export interface AccountSummaryView {
 
 export type TransactionDirection = "in" | "out";
 
+/**
+ * What kind of record this is, independent of its (user-editable) free-text
+ * description — callers that need to tell a real deposit/withdrawal/purchase
+ * apart from money moving between the buyer's own accounts should check
+ * this, not pattern-match on `description` (see categorize.ts).
+ */
+export type TransactionKind = "deposit" | "withdrawal" | "purchase" | "transfer";
+
 export interface TransactionView {
   /** YYYY-MM-DD, or "" when Nessie didn't supply a usable date. */
   date: string;
@@ -15,6 +24,7 @@ export interface TransactionView {
   amount: number;
   direction: TransactionDirection;
   account: string;
+  kind: TransactionKind;
 }
 
 export interface BillView {
@@ -52,6 +62,41 @@ const TRAILING_ISO_DATE = /\s*\(\d{4}-\d{2}-\d{2}\)\s*$/;
 
 function cleanLabel(text: string | undefined): string {
   return (text ?? "").replace(SEED_LABEL_PREFIX, "").replace(TRAILING_ISO_DATE, "").trim();
+}
+
+/**
+ * Nessie only gives a day-granularity date, so same-day records from
+ * different resources (a deposit and a withdrawal both dated today, say)
+ * have no real timestamp to order by on their own. Concatenating resource
+ * arrays before sorting would group same-day activity into category blocks
+ * (all deposits, then all withdrawals…). Weaving them round-robin first
+ * means the date sort below only has to break ties within an
+ * already-interleaved order, so same-day activity with no known creation
+ * order (see `_rank` below) reads mixed rather than clumped by type.
+ */
+function weave<T>(groups: T[][]): T[] {
+  const result: T[] = [];
+  const maxLen = Math.max(0, ...groups.map((g) => g.length));
+  for (let i = 0; i < maxLen; i++) {
+    for (const g of groups) if (i < g.length) result.push(g[i]);
+  }
+  return result;
+}
+
+/** A transaction, tagged with its creation rank when this app created it — see write-order.ts. */
+type RankedTransaction = TransactionView & { _rank: number | undefined };
+
+/**
+ * Primary order is the real `date`. Within the same day, a record this app
+ * created (`_rank` set — higher is newer) sorts by that, ahead of anything
+ * with no known creation order (seeded/historical data, whose relative
+ * order the weave above already mixed rather than blocked by category).
+ */
+function compareRecency(a: RankedTransaction, b: RankedTransaction): number {
+  if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+  if (a._rank !== undefined && b._rank !== undefined) return b._rank - a._rank;
+  if ((a._rank !== undefined) !== (b._rank !== undefined)) return a._rank !== undefined ? -1 : 1;
+  return 0;
 }
 
 const cents = (n: number) => Math.round(n * 100) / 100;
@@ -119,45 +164,75 @@ export function buildAccountsView(snapshot: NessieSnapshot, source: "live" | "mo
     balance: a.balance,
   }));
 
-  const transactions: TransactionView[] = [
-    ...snapshot.deposits.map(
-      (d): TransactionView => ({
-        date: d.transaction_date ?? "",
-        description: cleanLabel(d.description) || "Deposit",
-        amount: d.amount,
-        direction: "in",
-        account: label(d.accountId),
-      }),
-    ),
-    ...snapshot.withdrawals.map(
-      (w): TransactionView => ({
-        date: w.transaction_date ?? "",
-        description: cleanLabel(w.description) || "Withdrawal",
-        amount: w.amount,
-        direction: "out",
-        account: label(w.accountId),
-      }),
-    ),
-    ...snapshot.purchases.map(
-      (p): TransactionView => ({
-        date: p.purchase_date ?? "",
-        description: cleanLabel(p.description) || "Purchase",
-        amount: p.amount,
-        direction: "out",
-        account: label(p.accountId),
-      }),
-    ),
-    ...snapshot.transfers.map((t): TransactionView => {
-      const destination = t.payee_id || savingsId;
-      return {
-        date: t.transaction_date ?? "",
-        description: cleanLabel(t.description) || `Transfer to ${destination ? label(destination) : "another account"}`,
-        amount: t.amount,
-        direction: "out",
-        account: label(t.accountId),
-      };
+  const depositViews = snapshot.deposits.map(
+    (d): RankedTransaction => ({
+      date: d.transaction_date ?? "",
+      description: cleanLabel(d.description) || "Deposit",
+      amount: d.amount,
+      direction: "in",
+      account: label(d.accountId),
+      kind: "deposit",
+      _rank: creationRank(d._id),
     }),
-  ].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  );
+  const withdrawalViews = snapshot.withdrawals.map(
+    (w): RankedTransaction => ({
+      date: w.transaction_date ?? "",
+      description: cleanLabel(w.description) || "Withdrawal",
+      amount: w.amount,
+      direction: "out",
+      account: label(w.accountId),
+      kind: "withdrawal",
+      _rank: creationRank(w._id),
+    }),
+  );
+  const purchaseViews = snapshot.purchases.map(
+    (p): RankedTransaction => ({
+      date: p.purchase_date ?? "",
+      description: cleanLabel(p.description) || "Purchase",
+      amount: p.amount,
+      direction: "out",
+      account: label(p.accountId),
+      kind: "purchase",
+      _rank: creationRank(p._id),
+    }),
+  );
+  // A transfer moves money between two accounts, so — like a real bank app —
+  // it shows up on both: an outflow on the source and an inflow on the
+  // destination, not just the one record Nessie stores. Each transfer's pair
+  // is its own group so the two stay adjacent through the weave below, and
+  // both sides share the one transfer record's creation rank.
+  const transferGroups = snapshot.transfers.map((t): RankedTransaction[] => {
+    const destination = t.payee_id || savingsId;
+    const sourceLabel = label(t.accountId);
+    const destinationLabel = destination ? label(destination) : "another account";
+    const note = cleanLabel(t.description);
+    const rank = creationRank(t._id);
+    const out: RankedTransaction = {
+      date: t.transaction_date ?? "",
+      description: note || `Transfer to ${destinationLabel}`,
+      amount: t.amount,
+      direction: "out",
+      account: sourceLabel,
+      kind: "transfer",
+      _rank: rank,
+    };
+    if (!destination) return [out];
+    const inflow: RankedTransaction = {
+      date: t.transaction_date ?? "",
+      description: note || `Transfer from ${sourceLabel}`,
+      amount: t.amount,
+      direction: "in",
+      account: destinationLabel,
+      kind: "transfer",
+      _rank: rank,
+    };
+    return [out, inflow];
+  });
+
+  const transactions: TransactionView[] = weave([depositViews, withdrawalViews, purchaseViews, ...transferGroups])
+    .sort(compareRecency)
+    .map(({ date, description, amount, direction, account, kind }) => ({ date, description, amount, direction, account, kind }));
 
   const bills: BillView[] = snapshot.bills
     .filter((b) => b.status === "recurring")

@@ -7,6 +7,7 @@ import type {
   NessieLoan,
   NessiePurchase,
   NessieSnapshot,
+  NessieTransfer,
   NessieWithdrawal,
   WithAccount,
 } from "@/lib/nessie/types";
@@ -89,9 +90,11 @@ export function mockSnapshot(now: Date = new Date()): NessieSnapshot {
 
   const checkingId = "mock-checking";
   const savingsId = "mock-savings";
+  const cardId = "mock-card";
 
   let checkingBalance = Math.round(rand.between(600, 2200) / 10) * 10;
   let savingsBalance = Math.round(rand.between(300, 2800) / 10) * 10;
+  let cardBalance = Math.round(rand.between(200, 2200) / 10) * 10;
 
   const deposits: WithAccount<NessieDeposit>[] = [2, 16, 30, 44, 58, 72].map((daysAgo, i) => ({
     _id: `mock-deposit-${i}`,
@@ -113,6 +116,8 @@ export function mockSnapshot(now: Date = new Date()): NessieSnapshot {
     description: "ATM cash withdrawal",
   }));
 
+  const transfers: WithAccount<NessieTransfer>[] = [];
+
   const purchaseMerchants = ["Grocery Mart", "Fuel Stop", "Corner Diner", "Pharmacy", "Transit Pass"];
   const purchases: WithAccount<NessiePurchase>[] = Array.from({ length: 12 }, (_, i) => ({
     _id: `mock-purchase-${i}`,
@@ -122,6 +127,17 @@ export function mockSnapshot(now: Date = new Date()): NessieSnapshot {
     medium: "balance",
     amount: Math.round(rand.between(8, 95)),
     description: rand.pick(purchaseMerchants),
+  }));
+
+  const cardMerchants = ["Online Shop", "Streaming Service", "Hardware Store", "Bookstore", "Coffee Shop"];
+  const cardPurchases: WithAccount<NessiePurchase>[] = Array.from({ length: 6 }, (_, i) => ({
+    _id: `mock-card-purchase-${i}`,
+    accountId: cardId,
+    purchase_date: isoDaysAgo(rand.int(1, 85), nowMs),
+    status: "completed",
+    medium: "balance",
+    amount: Math.round(rand.between(15, 180)),
+    description: rand.pick(cardMerchants),
   }));
 
   const bills: WithAccount<NessieBill>[] = [
@@ -187,14 +203,26 @@ export function mockSnapshot(now: Date = new Date()): NessieSnapshot {
   writes.transfers.forEach((w, i) => {
     checkingBalance -= w.amount;
     savingsBalance += w.amount;
-    withdrawals.unshift({
+    transfers.unshift({
       _id: `mock-transfer-live-${i}`,
       accountId: checkingId,
       transaction_date: w.date,
       status: "completed",
+      payee_id: savingsId,
+      amount: w.amount,
+      description: w.description,
+    });
+  });
+  writes.purchases.forEach((w, i) => {
+    cardBalance += w.amount;
+    cardPurchases.unshift({
+      _id: `mock-card-purchase-live-${i}`,
+      accountId: cardId,
+      purchase_date: w.date,
+      status: "completed",
       medium: "balance",
       amount: w.amount,
-      description: w.description || "Transfer to Rainy Day Savings",
+      description: w.description,
     });
   });
   writes.bills.forEach((w, i) => {
@@ -210,9 +238,19 @@ export function mockSnapshot(now: Date = new Date()): NessieSnapshot {
   });
 
   const accounts: NessieAccount[] = [
-    { _id: checkingId, type: "Checking", nickname: "Everyday Checking", balance: Math.round(checkingBalance * 100) / 100 },
-    { _id: savingsId, type: "Savings", nickname: "Rainy Day Savings", balance: Math.round(savingsBalance * 100) / 100 },
+    { _id: checkingId, type: "Checking", nickname: "360 Checking", balance: Math.round(checkingBalance * 100) / 100 },
+    { _id: savingsId, type: "Savings", nickname: "360 Performance Savings", balance: Math.round(savingsBalance * 100) / 100 },
+    { _id: cardId, type: "Credit Card", nickname: "Savor Rewards", balance: Math.round(cardBalance * 100) / 100 },
   ];
 
-  return { accounts, deposits, withdrawals, purchases, transfers: [], bills, loans, dropped: 0 };
+  return {
+    accounts,
+    deposits,
+    withdrawals,
+    purchases: [...purchases, ...cardPurchases],
+    transfers,
+    bills,
+    loans,
+    dropped: 0,
+  };
 }

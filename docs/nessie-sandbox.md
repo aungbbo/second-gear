@@ -63,7 +63,9 @@ Transactions are dated relative to the seed day (2–80 days old). The analyzer 
 
 ## Banking tab writes and balances
 
-The Banking tab posts deposits, withdrawals, transfers and recurring bills to the customer's checking account (`POST /api/nessie/accounts/{deposit,withdrawal,transfer,bill}`). Each is a single, never-retried POST. Transfers go checking → savings only.
+The Banking tab posts deposits, withdrawals, transfers, card purchases and recurring bills (`POST /api/nessie/accounts/{deposit,withdrawal,transfer,purchase,bill}`). Each is a single, never-retried POST. Transfers go checking → savings only; purchases go to the Credit Card account only.
+
+**`POST /accounts/{id}/purchases` requires `merchant_id` and also silently truncates `amount` to a whole dollar** (both verified 2026-10-25) — a purchase with no `merchant_id` is rejected `"field required"`, and a $1.23 purchase comes back stored as $1. `getDefaultMerchantId` in `src/lib/nessie/client.ts` reuses whichever merchant the seed script already created (never shown to the buyer), and `postPurchase` in `src/lib/nessie/actions.ts` refuses cents client-side rather than letting the sandbox quietly drop them.
 
 **`GET /accounts/{id}/transfers` answers 404 "No transfers found for this account" instead of `200 []` when an account has none yet, and each listed record is keyed `id`, not `_id` like every other resource** (both verified 2026-10-24). `getAccountTransfers` in `src/lib/nessie/client.ts` treats that specific 404 as an empty list and remaps `id` → `_id` before validating — otherwise every transfer gets silently dropped as unidentifiable.
 

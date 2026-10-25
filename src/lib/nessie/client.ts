@@ -214,7 +214,14 @@ async function nessiePostOnce(cfg: LiveNessieConfig, path: string, body: Record<
   }
 }
 
-async function nessiePost(cfg: LiveNessieConfig, path: string, body: Record<string, unknown>): Promise<void> {
+/**
+ * Returns the newly created record's `_id` when the response includes one,
+ * so a caller can pin it to the front of its list after the next GET — the
+ * sandbox returns each resource sorted by `_id` (effectively random order,
+ * unrelated to creation time; verified 2026-10-25), so without this a
+ * just-posted transaction can land past the display limit.
+ */
+async function nessiePost(cfg: LiveNessieConfig, path: string, body: Record<string, unknown>): Promise<string | null> {
   const endpoint = `POST ${path.replace(/\/(customers|accounts|merchants)\/[^/]+/g, "/$1/:id")}`;
   const response = await nessiePostOnce(cfg, path, body);
   if (response.status === 401 || response.status === 403) {
@@ -229,6 +236,13 @@ async function nessiePost(cfg: LiveNessieConfig, path: string, body: Record<stri
       status: response.status,
       detail: `HTTP ${response.status} from ${endpoint}${text ? `: ${text.slice(0, 200)}` : ""}`,
     });
+  }
+  try {
+    const parsed = (await response.json()) as { objectCreated?: { _id?: unknown } };
+    const id = parsed.objectCreated?._id;
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
   }
 }
 
@@ -248,8 +262,8 @@ export async function createDeposit(
   accountId: string,
   amount: number,
   description: string,
-): Promise<void> {
-  await nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/deposits`, {
+): Promise<string | null> {
+  return nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/deposits`, {
     medium: "balance",
     status: "completed",
     transaction_date: todayIso(),
@@ -263,8 +277,8 @@ export async function createWithdrawal(
   accountId: string,
   amount: number,
   description: string,
-): Promise<void> {
-  await nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/withdrawals`, {
+): Promise<string | null> {
+  return nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/withdrawals`, {
     medium: "balance",
     status: "completed",
     transaction_date: todayIso(),
@@ -287,9 +301,9 @@ export async function createTransfer(
   toAccountId: string,
   amount: number,
   description: string,
-): Promise<void> {
+): Promise<string | null> {
   void toAccountId;
-  await nessiePost(cfg, `/accounts/${encodeURIComponent(fromAccountId)}/transfers`, {
+  return nessiePost(cfg, `/accounts/${encodeURIComponent(fromAccountId)}/transfers`, {
     status: "completed",
     transaction_date: todayIso(),
     amount,
@@ -312,6 +326,46 @@ export async function createBill(
     payment_amount: amount,
     recurring_date: dayOfMonth,
     payment_date: mostRecentDueDate(dayOfMonth),
+  });
+}
+
+const INSUFFICIENT_MERCHANTS = "There's no merchant on file to post a card purchase against.";
+
+/**
+ * Card purchases require a `merchant_id` the sandbox won't let us omit
+ * (verified 2026-10-25: a purchase with no merchant_id is rejected "field
+ * required"). The seed script always creates a few demo merchants, so this
+ * just reuses whichever one comes back first — nothing about it is shown
+ * to the buyer.
+ */
+export async function getDefaultMerchantId(cfg: LiveNessieConfig): Promise<string> {
+  const merchants = await nessieGet(cfg, "/merchants");
+  if (Array.isArray(merchants)) {
+    const first = merchants[0] as { _id?: unknown } | undefined;
+    if (first && typeof first._id === "string") return first._id;
+  }
+  throw new NessieError("insufficient_data", INSUFFICIENT_MERCHANTS);
+}
+
+/**
+ * Like deposits and withdrawals, the sandbox silently truncates `amount` to
+ * a whole dollar (verified 2026-10-25: a $1.23 purchase comes back stored
+ * as $1) — so cents are refused client-side rather than quietly dropped.
+ */
+export async function createPurchase(
+  cfg: LiveNessieConfig,
+  accountId: string,
+  merchantId: string,
+  amount: number,
+  description: string,
+): Promise<string | null> {
+  return nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/purchases`, {
+    medium: "balance",
+    status: "completed",
+    purchase_date: todayIso(),
+    merchant_id: merchantId,
+    amount,
+    description: toAscii(description).slice(0, 100) || "Purchase",
   });
 }
 

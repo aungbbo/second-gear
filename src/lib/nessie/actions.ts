@@ -2,20 +2,24 @@ import { buildAccountsView, SEED_LABEL_PREFIX, withPostedActivity, type Accounts
 import {
   createBill,
   createDeposit,
+  createPurchase,
   createTransfer,
   createWithdrawal,
   fetchNessieSnapshot,
+  getDefaultMerchantId,
   type LiveNessieConfig,
 } from "@/lib/nessie/client";
 import { getNessieConfig } from "@/lib/nessie/config";
 import { NessieError } from "@/lib/nessie/errors";
-import { addMockBill, addMockDeposit, addMockTransfer, addMockWithdrawal } from "@/lib/nessie/mock-store";
+import { addMockBill, addMockDeposit, addMockPurchase, addMockTransfer, addMockWithdrawal } from "@/lib/nessie/mock-store";
 import { mockSnapshot } from "@/lib/nessie/mock";
 import type { NessieAccount, NessieSnapshot } from "@/lib/nessie/types";
+import { recordCreated } from "@/lib/nessie/write-order";
 
 const MAX_AMOUNT = 20000;
 const NO_CHECKING_ACCOUNT = "There's no checking account to post to.";
 const NO_SAVINGS_ACCOUNT = "There's no savings account to transfer into.";
+const NO_CREDIT_CARD = "There's no credit card on this account.";
 
 function assertAmount(amount: unknown): number {
   if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0 || amount > MAX_AMOUNT) {
@@ -64,6 +68,12 @@ function savingsOf(snapshot: NessieSnapshot): NessieAccount {
   return savings;
 }
 
+function creditCardOf(snapshot: NessieSnapshot): NessieAccount {
+  const card = snapshot.accounts.find((a) => a.type === "Credit Card");
+  if (!card) throw new NessieError("insufficient_data", NO_CREDIT_CARD);
+  return card;
+}
+
 function assertCovered(amount: number, checking: NessieAccount): void {
   if (amount > checking.balance) {
     throw new NessieError(
@@ -100,7 +110,7 @@ export async function postDeposit(input: DepositInput): Promise<AccountsView> {
   }
 
   const checking = checkingOf(await fetchNessieSnapshot(cfg));
-  await createDeposit(cfg, checking._id, amount, description);
+  recordCreated(await createDeposit(cfg, checking._id, amount, description));
   return buildAccountsView(await liveSnapshot(cfg), "live");
 }
 
@@ -122,7 +132,7 @@ export async function postWithdrawal(input: WithdrawalInput): Promise<AccountsVi
 
   const checking = checkingOf(await liveSnapshot(cfg));
   assertCovered(amount, checking);
-  await createWithdrawal(cfg, checking._id, amount, description);
+  recordCreated(await createWithdrawal(cfg, checking._id, amount, description));
   return buildAccountsView(await liveSnapshot(cfg), "live");
 }
 
@@ -147,7 +157,29 @@ export async function postTransfer(input: TransferInput): Promise<AccountsView> 
   const checking = checkingOf(snapshot);
   const savings = savingsOf(snapshot);
   assertCovered(amount, checking);
-  await createTransfer(cfg, checking._id, savings._id, amount, description);
+  recordCreated(await createTransfer(cfg, checking._id, savings._id, amount, description));
+  return buildAccountsView(await liveSnapshot(cfg), "live");
+}
+
+export interface PurchaseInput {
+  amount: unknown;
+  description: unknown;
+}
+
+/** Spends on the Credit Card account. Nessie requires a `merchant_id` on every purchase. */
+export async function postPurchase(input: PurchaseInput): Promise<AccountsView> {
+  const amount = assertWholeDollars(input.amount);
+  const description = assertText(input.description, "Purchase");
+  const cfg = getNessieConfig();
+
+  if (cfg.mode === "mock") {
+    addMockPurchase(amount, description);
+    return buildAccountsView(mockSnapshot(), "mock");
+  }
+
+  const card = creditCardOf(await fetchNessieSnapshot(cfg));
+  const merchantId = await getDefaultMerchantId(cfg);
+  recordCreated(await createPurchase(cfg, card._id, merchantId, amount, description));
   return buildAccountsView(await liveSnapshot(cfg), "live");
 }
 
