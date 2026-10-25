@@ -5,14 +5,15 @@ Second Gear is an AI-assisted car-shopping application for first-time and subpri
 ## Product workflow
 
 ```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 60, "rankSpacing": 70, "wrappingWidth": 180, "minNodeWidth": 220, "padding": 20}, "themeVariables": {"fontSize": "16px"}}}%%
 flowchart TD
-    A["Buyer<br/>Next.js UI<br/>Request<br/>Budget + consent"]
+    A["Buyer<br/>Next.js UI<br/>Request +<br/>consent"]
     B["CRS credit<br/>API<br/>Credit profile<br/>Estimated APR"]
-    C["Capital One<br/>Nessie<br/>Income +<br/>expenses<br/>Existing debt"]
-    D["Affordability<br/>engine<br/>Safe payment<br/>Ownership<br/>budget<br/>Max car price"]
-    E["Bitdeer AI<br/>Search<br/>planning<br/>Preferences<br/>+ filters"]
+    C["Capital One<br/>Nessie<br/>Income + debt<br/>Expenses"]
+    D["Affordability<br/>engine<br/>Safe payment<br/>Max car price"]
+    E["Bitdeer AI<br/>Search<br/>Preferences<br/>+ filters"]
     F["Apify<br/>AutoTrader<br/>Used-car<br/>listings"]
-    G["Loan +<br/>ownership<br/>calculations<br/>Payment + cost<br/>Negative equity"]
+    G["Loan +<br/>ownership<br/>Payment + cost<br/>Negative equity"]
     H["Bitdeer AI<br/>Explain + rank<br/>Recommendations<br/>Negotiation"]
     I["Ranked cars<br/>Dealer packet<br/>Talking points<br/>Next steps"]
 
