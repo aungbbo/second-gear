@@ -40,7 +40,7 @@ export function ResultsView({ result, onBack, onCompare }: ResultsViewProps) {
           <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">Your best options</h1>
         </div>
         <div className="bg-card border border-line rounded-2xl px-4 py-3 shrink-0">
-          <p className="text-xs text-ink-soft">Auto payment target</p>
+          <p className="text-xs text-ink-soft">Your monthly target</p>
           <p className="font-display font-bold text-xl text-teal mt-0.5">≤ ${need.maxMonthlyPayment}/mo</p>
         </div>
       </div>

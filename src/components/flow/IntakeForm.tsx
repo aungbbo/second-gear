@@ -162,8 +162,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
               <input
                 type="number"
                 min={0}
-                max={20000}
-                step={50}
+                step={1}
                 value={downPayment}
                 onChange={(e) => setDownPayment(e.target.value)}
                 placeholder="Optional"

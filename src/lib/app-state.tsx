@@ -3,7 +3,9 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { PipelineResult } from "@/lib/types";
 
-const STORAGE_KEY = "second-gear:last-result";
+// Bump this when the pipeline result contract or affordability rules change so
+// an older browser session cannot keep rendering stale decisions.
+const STORAGE_KEY = "second-gear:last-result:v2";
 
 interface AppStateValue {
   result: PipelineResult | null;

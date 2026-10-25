@@ -53,8 +53,8 @@ only for genuinely similar vehicles in similar locations, and treat every amount
 
 Rank EVERY provided candidate from best fit to worst fit, exactly once. Return all candidate listingIds in
 rankedCars in the desired order; do not shortlist, omit, or invent a listing. Optimize for the buyer's stated
-priorities while balancing all-in monthly ownership cost against both the buyer's payment target and the
-cash-flow-based sustainable payment. Consider APR, total interest, term length, negative-equity exposure,
+priorities while balancing all-in monthly ownership cost against the buyer's monthly payment target. Consider APR,
+total interest, term length, negative-equity exposure,
 reliability, fuel economy, stated use, and CARFAX history when supplied. Prefer verified clean history, but
 unknown history is unknown and must never be treated as clean. Credit score or tier alone must not decide rank.
 
@@ -114,7 +114,7 @@ export async function explainAndRank(input: ExplainAndRankInput): Promise<Explai
 
   const scored = analyses.map((analysis) => ({
     analysis,
-    matchScore: scoreCar(analysis, affordability),
+    matchScore: scoreCar(analysis),
   }));
   const sorted = [...scored].sort((a, b) => b.matchScore - a.matchScore);
   const candidates = scored;
@@ -239,7 +239,7 @@ async function callBitdeerRanking(params: {
       monthlyPayment: analysis.bestScenario.monthlyPayment,
       totalInterest: analysis.bestScenario.totalInterest,
       totalLoanPayments: analysis.bestScenario.totalCost,
-      loanPaymentWithinCashFlowCapacity: analysis.bestScenario.withinBudget,
+      loanPaymentWithinBuyerTarget: analysis.bestScenario.withinBudget,
       provisionalNonInsuranceOwnershipCosts: {
         fuelMonthly: analysis.ownershipCosts.fuelMonthly,
         maintenanceMonthly: analysis.ownershipCosts.maintenanceMonthly,
@@ -384,12 +384,12 @@ function validMonthlyEstimate(value: unknown): number | undefined {
     : undefined;
 }
 
-function scoreCar(analysis: CarAnalysis, affordability: AffordabilityResult): number {
+function scoreCar(analysis: CarAnalysis): number {
   const { bestScenario, listing, warnings } = analysis;
   let score = 100;
 
   if (!bestScenario.withinBudget) {
-    const overBy = bestScenario.monthlyPayment - affordability.maxSustainablePayment;
+    const overBy = bestScenario.monthlyPayment - analysis.affordabilityDecision.maxSustainableMonthlyCost;
     score -= Math.min(45, 20 + overBy / 5);
   }
 
@@ -407,7 +407,7 @@ function scoreCar(analysis: CarAnalysis, affordability: AffordabilityResult): nu
 function buildHeadline(analysis: CarAnalysis, rank: number, affordability: AffordabilityResult): string {
   const { bestScenario, warnings } = analysis;
   if (rank === 1) return "Best overall fit";
-  if (!bestScenario.withinBudget) return "Stretches past your safe budget";
+  if (!bestScenario.withinBudget) return "Stretches past your monthly target";
   if (bestScenario.negativeEquityMonths >= 30) return "Fits budget, but resale risk is high";
   if (warnings.length === 0) return "Clean fit, no red flags";
   if (bestScenario.monthlyPayment <= affordability.recommendedPayment) return "Comfortably under budget";
@@ -474,7 +474,7 @@ function buildDealerPacket(
       `Lead with your target payment of $${affordability.recommendedPayment}/mo, not the price — dealers negotiate the number you bring up first.`,
       "Ask for the out-the-door price in writing before any financing conversation starts.",
       `You're already shopping pre-qualified. Only finance through the dealer if they beat ${credit.estimatedApr.max}% APR.`,
-      `Walk away if add-ons push the payment past $${affordability.maxSustainablePayment}/mo — that's your hard ceiling, not a suggestion.`,
+      `Walk away if add-ons push the payment past $${need.maxMonthlyPayment}/mo — that's your monthly target.`,
     ],
     generatedAt: new Date().toISOString(),
   };

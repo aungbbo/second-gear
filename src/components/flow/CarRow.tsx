@@ -14,12 +14,12 @@ export function CarRow({ car }: CarRowProps) {
   const { listing, bestScenario, allScenarios, warnings, ownershipCosts, affordabilityDecision } = car;
   const fits = affordabilityDecision.status === "affordable";
   const statusLabel = fits
-    ? "Fits full budget"
+    ? "Fits monthly target"
     : affordabilityDecision.status === "financially_risky"
       ? "Fits with risks"
       : affordabilityDecision.status === "insufficient_data"
         ? "Needs more data"
-        : "Over budget";
+        : "Above monthly target";
 
   return (
     <article className={`overflow-hidden rounded-2xl border bg-card shadow-sm ${car.rank === 1 ? "border-2 border-teal" : "border-line"}`}>
@@ -148,7 +148,7 @@ export function CarRow({ car }: CarRowProps) {
                 ))}
               </tbody>
             </table>
-            <p className="mt-2 text-[0.68rem] text-ink-soft">* loan payment exceeds the estimated safe monthly capacity.</p>
+            <p className="mt-2 text-[0.68rem] text-ink-soft">* loan payment exceeds your monthly target.</p>
           </div>
         </div>
       )}

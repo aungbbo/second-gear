@@ -34,10 +34,10 @@ function decisionFor(
 ): VehicleAffordabilityDecision {
   const warnings = riskWarnings(assessment, scenario);
   const reasons: string[] = [];
-  if (ownershipCosts.totalMonthlyCost > assessment.sustainableMonthlyPayment + 0.5) {
-    reasons.push(`Estimated monthly car cost is $${ownershipCosts.totalMonthlyCost}, above the $${assessment.sustainableMonthlyPayment} payment-capacity estimate.`);
+  if (ownershipCosts.totalMonthlyCost > assessment.statedMonthlyBudget + 0.5) {
+    reasons.push(`Estimated monthly car cost is $${ownershipCosts.totalMonthlyCost}, above your $${assessment.statedMonthlyBudget} monthly target.`);
   }
-  if (!scenario.withinBudget) reasons.push(`The estimated loan payment is $${scenario.monthlyPayment}, above the $${assessment.sustainableMonthlyPayment} monthly payment-capacity estimate, before ongoing ownership costs.`);
+  if (!scenario.withinBudget) reasons.push(`The estimated loan payment is $${scenario.monthlyPayment}, above your $${assessment.statedMonthlyBudget} monthly target, before ongoing ownership costs.`);
   if (scenario.termMonths >= 72) reasons.push("The payment only works on a 72-month term.");
   if (scenario.negativeEquityMonths >= 24) reasons.push("Depreciation creates extended negative-equity exposure.");
 
@@ -46,19 +46,19 @@ function decisionFor(
       status: "insufficient_data",
       recommendedPurchase: false,
       totalMonthlyCost: ownershipCosts.totalMonthlyCost,
-      maxSustainableMonthlyCost: assessment.sustainableMonthlyPayment,
+      maxSustainableMonthlyCost: assessment.statedMonthlyBudget,
       reasons: ["A safe vehicle decision requires complete income, debt, savings, and credit inputs."],
       warnings,
     };
   }
 
-  const paymentFits = scenario.withinBudget && ownershipCosts.totalMonthlyCost <= assessment.sustainableMonthlyPayment + 0.5;
+  const paymentFits = scenario.withinBudget && ownershipCosts.totalMonthlyCost <= assessment.statedMonthlyBudget + 0.5;
   if (!paymentFits) {
     return {
       status: "not_affordable",
       recommendedPurchase: false,
       totalMonthlyCost: ownershipCosts.totalMonthlyCost,
-      maxSustainableMonthlyCost: assessment.sustainableMonthlyPayment,
+      maxSustainableMonthlyCost: assessment.statedMonthlyBudget,
       reasons: reasons.length > 0 ? reasons : ["No available financing term fits the sustainable monthly cost."],
       warnings,
     };
@@ -69,8 +69,8 @@ function decisionFor(
     status: risky ? "financially_risky" : "affordable",
     recommendedPurchase: !risky,
     totalMonthlyCost: ownershipCosts.totalMonthlyCost,
-    maxSustainableMonthlyCost: assessment.sustainableMonthlyPayment,
-    reasons: risky ? ["The payment fits, but the term, interest, depreciation, or broader financial risks warrant caution."] : ["Loan payment and estimated recurring ownership costs fit the sustainable ceiling."],
+    maxSustainableMonthlyCost: assessment.statedMonthlyBudget,
+    reasons: risky ? ["The payment fits your monthly target, but the term, interest, depreciation, or broader financial risks warrant caution."] : ["Loan payment and estimated recurring ownership costs fit your monthly target."],
     warnings,
   };
 }

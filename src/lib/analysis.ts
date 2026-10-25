@@ -28,7 +28,7 @@ export function analyzeCars(
       downPayment,
       credit.estimatedApr.min,
       credit.estimatedApr.max,
-      assessment.sustainableMonthlyPayment,
+      assessment.statedMonthlyBudget,
     );
     const evaluation = evaluateVehicle(
       listing,
@@ -76,8 +76,8 @@ function buildVehicleWarnings(
   const warnings: string[] = [];
 
   if (!scenario.withinBudget) {
-    const over = scenario.monthlyPayment - assessment.sustainableMonthlyPayment;
-    warnings.push(`Even stretched to ${scenario.termMonths} months, the payment runs $${over}/mo over your safe budget.`);
+    const over = scenario.monthlyPayment - assessment.statedMonthlyBudget;
+    warnings.push(`Even stretched to ${scenario.termMonths} months, the payment runs $${over}/mo over your monthly target.`);
   }
   if (scenario.negativeEquityMonths >= 30) {
     warnings.push(`You'd owe more than the car is worth for roughly ${scenario.negativeEquityMonths} months — risky if you need to sell or trade in early.`);
