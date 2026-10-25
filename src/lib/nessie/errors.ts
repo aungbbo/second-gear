@@ -46,3 +46,14 @@ export class NessieError extends Error {
 export function redactKey(url: string): string {
   return url.replace(KEY_PARAM, "$1***");
 }
+
+/** Shared by every route that can surface a NessieError to an HTTP response. */
+export const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
+  config: 503,
+  auth: 502,
+  timeout: 502,
+  upstream: 502,
+  invalid_response: 502,
+  not_found: 422,
+  insufficient_data: 422,
+};

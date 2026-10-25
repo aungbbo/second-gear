@@ -1,15 +1,18 @@
 interface LogoProps {
   className?: string;
-  mark?: boolean;
 }
 
 export function LogoMark({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
-      <line x1="7" y1="24" x2="25" y2="8" stroke="currentColor" strokeWidth="1.4" opacity="0.5" />
-      <circle cx="7" cy="24" r="3" fill="none" stroke="currentColor" strokeWidth="1.6" />
-      <circle cx="16" cy="16" r="3.6" fill="var(--gold)" stroke="var(--gold)" />
-      <circle cx="25" cy="8" r="3" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <rect width="32" height="32" rx="9" fill="var(--teal)" />
+      <path
+        d="M20.8 11.6c-.9-1.1-2.4-1.7-4.3-1.7-2.9 0-4.7 1.3-4.7 3.3 0 2.2 2 2.8 4.4 3.3 2.9.6 5.3 1.3 5.3 4 0 2.6-2.3 4.1-5.4 4.1-2.5 0-4.5-.8-5.7-2.3"
+        stroke="var(--cream)"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        fill="none"
+      />
     </svg>
   );
 }
@@ -17,8 +20,8 @@ export function LogoMark({ className }: { className?: string }) {
 export function Logo({ className }: LogoProps) {
   return (
     <span className={`inline-flex items-center gap-2.5 ${className ?? ""}`}>
-      <LogoMark className="w-6 h-6 text-ink shrink-0" />
-      <span className="font-display text-[1.2rem] leading-none tracking-tight">Second Gear</span>
+      <LogoMark className="w-7 h-7 shrink-0" />
+      <span className="font-display font-bold text-[1.15rem] leading-none tracking-tight text-ink">Second Gear</span>
     </span>
   );
 }

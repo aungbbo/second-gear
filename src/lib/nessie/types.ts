@@ -37,6 +37,17 @@ export interface NessieWithdrawal {
   description?: string;
 }
 
+/** A transfer is posted to the source account; `payee_id` is the destination. */
+export interface NessieTransfer {
+  _id: string;
+  transaction_date?: string;
+  status?: string;
+  medium?: string;
+  payee_id?: string;
+  amount: number;
+  description?: string;
+}
+
 export interface NessiePurchase {
   _id: string;
   purchase_date?: string;
@@ -81,6 +92,8 @@ export interface NessieSnapshot {
   deposits: WithAccount<NessieDeposit>[];
   withdrawals: WithAccount<NessieWithdrawal>[];
   purchases: WithAccount<NessiePurchase>[];
+  /** Tagged with the account the transfer was posted *from*. */
+  transfers: WithAccount<NessieTransfer>[];
   bills: WithAccount<NessieBill>[];
   loans: WithAccount<NessieLoan>[];
   /** Records discarded because they failed shape validation. */

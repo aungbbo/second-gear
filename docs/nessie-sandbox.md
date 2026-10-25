@@ -1,6 +1,6 @@
 # Nessie sandbox: demo data
 
-Second Gear reads cash flow from the Capital One Nessie sandbox (`NESSIE_MODE=live`). A fresh sandbox key has no data, so the pipeline answers 422 until a customer is seeded. `scripts/nessie-seed.mjs` creates one demo persona. It is development-only: the app never imports it, and the app itself only ever reads from Nessie.
+Second Gear reads cash flow from the Capital One Nessie sandbox (`NESSIE_MODE=live`). A fresh sandbox key has no data, so the pipeline answers 422 until a customer is seeded. `scripts/nessie-seed.mjs` creates one demo persona. It is development-only: the app never imports it. The app's only writes are the Banking tab's "+ Deposit / + Transaction / + Recurring bill" buttons (see below).
 
 ## Seeding
 
@@ -60,6 +60,16 @@ After `--apply`:
 ### Data aging
 
 Transactions are dated relative to the seed day (2–80 days old). The analyzer uses a rolling 90-day window, so results are exact only on the seed day. After about 5 days, records shift buckets, and the oldest leave the window soon after. To refresh, seed again with `--allow-duplicate` (a new customer) and update `NESSIE_CUSTOMER_ID`. Don't try to delete the old customer.
+
+## Banking tab writes and balances
+
+The Banking tab posts deposits, withdrawals, transfers and recurring bills to the customer's checking account (`POST /api/nessie/accounts/{deposit,withdrawal,transfer,bill}`). Each is a single, never-retried POST. Transfers go checking → savings only.
+
+**`GET /accounts/{id}/transfers` answers 404 "No transfers found for this account" instead of `200 []` when an account has none yet, and each listed record is keyed `id`, not `_id` like every other resource** (both verified 2026-10-24). `getAccountTransfers` in `src/lib/nessie/client.ts` treats that specific 404 as an empty list and remaps `id` → `_id` before validating — otherwise every transfer gets silently dropped as unidentifiable.
+
+**`POST /accounts/{id}/transfers` has no field for the destination account** (verified 2026-10-24). `TransferCreate` accepts `status`, `transaction_date`, `amount` and `description`, but rejects `medium`, `payee_id`, `transfer_to_id` and `toAccountId` as extra fields, and a destination passed as a `?payee_id=` query param is silently ignored — `GET /transfers/{id}` afterward shows no trace of it. So a transfer record never says where the money went. Since this demo customer has exactly one savings account and `postTransfer` only ever moves checking → savings, `withPostedActivity` and `buildAccountsView` in `src/lib/nessie/account-view.ts` credit that single savings account by convention whenever a transfer's `payee_id` is absent, rather than relying on the sandbox to record it.
+
+**The sandbox never moves an account's `balance` after the account is created.** A new deposit or withdrawal shows up in the ledger, but `balance` stays put. `PUT /accounts/{id}` can't fix it: without `nickname` it answers `HTTP 400 — "1 validation error for AccountUpdate / nickname / field required"`, and with `nickname` it answers 202 but silently ignores `balance` (verified 2026-10-24). So the app treats the stored balance as the opening balance and adds every deposit, withdrawal and purchase that isn't labeled `sg-seed:` (seeded history is already in the opening balance) and isn't `cancelled` (`withPostedActivity` in `src/lib/nessie/account-view.ts`). Total balance counts checking and savings only. Card balances are shown as owed. Withdrawals larger than the checking balance are refused before anything is posted. Deposits and withdrawals take whole dollars only, because the [OpenAPI spec](https://prod.nessieisreal.com/nessie-openapi-spec.yaml) types their `amount` as an integer (bill amounts are floats). The spec also confirms that `AccountUpdate` has a single field, `nickname`. The default host is the spec's production server, `https://prod-api.nessieisreal.com`, which serves the same data as the older `api.nessieisreal.com`.
 
 ## Personas in the sandbox
 

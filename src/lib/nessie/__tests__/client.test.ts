@@ -152,8 +152,8 @@ describe("fetchNessieSnapshot", () => {
     expect(snapshot.purchases.map((p) => p.accountId)).toEqual(["cc", "cc"]);
     expect(snapshot.loans).toHaveLength(2);
     expect(snapshot.dropped).toBe(0);
-    // 1 accounts call + 5 resources × 3 accounts, all GET.
-    expect(fetchMock).toHaveBeenCalledTimes(16);
+    // 1 accounts call + 6 resources × 3 accounts, all GET.
+    expect(fetchMock).toHaveBeenCalledTimes(19);
   });
 
   it("fails the snapshot when any account's loans can't be read", async () => {

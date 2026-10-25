@@ -1,18 +1,25 @@
 import type { Metadata } from "next";
-import { Fraunces, Public_Sans } from "next/font/google";
+import { Fraunces, Plus_Jakarta_Sans, Public_Sans } from "next/font/google";
 import "./globals.css";
 
-const fraunces = Fraunces({
+const plusJakarta = Plus_Jakarta_Sans({
   variable: "--font-display",
   subsets: ["latin"],
-  axes: ["opsz", "SOFT", "WONK"],
-  style: ["normal", "italic"],
+  weight: ["600", "700", "800"],
 });
 
 const publicSans = Public_Sans({
   variable: "--font-body",
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
+});
+
+// Italic accent for emphasis phrases in headlines — e.g. "your full budget."
+const fraunces = Fraunces({
+  variable: "--font-accent",
+  subsets: ["latin"],
+  axes: ["opsz", "SOFT"],
+  style: ["italic"],
 });
 
 export const metadata: Metadata = {
@@ -23,7 +30,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${publicSans.variable} h-full`}>
+    <html lang="en" className={`${plusJakarta.variable} ${publicSans.variable} ${fraunces.variable} h-full`}>
       <body className="min-h-full flex flex-col bg-paper text-ink antialiased">
         {children}
       </body>

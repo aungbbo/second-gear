@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, Loader2 } from "lucide-react";
+import { Check, Loader2, Sparkles } from "lucide-react";
+import { Eyebrow } from "@/components/ui/Eyebrow";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
 
 interface PipelineTimelineProps {
@@ -13,11 +14,36 @@ interface PipelineTimelineProps {
 }
 
 const STEP_DEFS = [
-  { label: "Reading your credit report", working: "Pulling your soft-pull credit factors…" },
-  { label: "Sizing up what you can afford", working: "Matching bank activity to a safe payment…" },
-  { label: "Searching live listings", working: "Scanning public inventory near you…" },
-  { label: "Pricing every loan option", working: "Running amortization across loan terms…" },
-  { label: "Ranking and writing it up", working: "Weighing cost, risk, and fit…" },
+  {
+    label: "Reviewing credit information",
+    provider: "CRS",
+    whatItDoes: "Checks your credit range and debt profile.",
+    working: "Pulling your soft-pull credit factors…",
+  },
+  {
+    label: "Analyzing cash flow and affordability",
+    provider: "Nessie",
+    whatItDoes: "Reads your income, bills, and spending.",
+    working: "Matching bank activity to a safe payment…",
+  },
+  {
+    label: "Searching vehicle listings",
+    provider: "Apify",
+    whatItDoes: "Scans public inventory near you.",
+    working: "Scanning public inventory near you…",
+  },
+  {
+    label: "Comparing loan and ownership costs",
+    provider: "Calculator",
+    whatItDoes: "Runs amortization across loan terms.",
+    working: "Running amortization across loan terms…",
+  },
+  {
+    label: "Ranking and explaining results",
+    provider: "Second Gear",
+    whatItDoes: "Weighs cost, risk, and fit.",
+    working: "Weighing cost, risk, and fit…",
+  },
 ];
 
 type Status = "pending" | "active" | "done";
@@ -92,43 +118,76 @@ export function PipelineTimeline({ need, consentToken, onComplete, onError }: Pi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return (
-    <div className="max-w-xl">
-      <h1 className="font-display text-[2rem] sm:text-[2.4rem] leading-tight">Working on it.</h1>
-      <p className="mt-3 text-ink-soft">Five steps, no further input needed. This usually takes a few seconds.</p>
+  const doneCount = status.filter((s) => s === "done").length;
+  const percent = Math.round((doneCount / STEP_DEFS.length) * 100);
 
-      <ol className="mt-12 relative">
-        <div className="absolute left-[15px] top-2 bottom-2 w-px bg-line" aria-hidden="true" />
+  return (
+    <div className="max-w-2xl mx-auto text-center">
+      <span className="mx-auto w-16 h-16 rounded-full bg-teal-paper flex items-center justify-center">
+        <Sparkles className="w-7 h-7 text-teal" />
+      </span>
+      <div className="mt-4 flex justify-center">
+        <Eyebrow icon={<Sparkles className="w-3.5 h-3.5" />}>Transparent analysis</Eyebrow>
+      </div>
+      <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-2">
+        Here is how your plan is built.
+      </h1>
+      <p className="mt-2 text-ink-soft">Open any step to see its inputs and findings.</p>
+
+      <div className="mt-8 flex items-center justify-between text-sm font-medium">
+        <span>{percent === 100 ? "Analysis complete" : "Analyzing…"}</span>
+        <span className="tabular">{percent}%</span>
+      </div>
+      <div className="mt-2 h-1.5 rounded-full bg-paper-high overflow-hidden">
+        <div className="h-full bg-teal transition-all duration-500" style={{ width: `${percent}%` }} />
+      </div>
+
+      <div className="mt-6 space-y-3 text-left">
         {STEP_DEFS.map((def, i) => (
-          <li key={def.label} className="relative flex gap-6 pb-9 last:pb-0">
-            <div
-              className={`relative z-10 shrink-0 w-8 h-8 rounded-full border flex items-center justify-center transition-colors duration-300 ${
-                status[i] === "done"
-                  ? "bg-moss border-moss text-cream"
-                  : status[i] === "active"
-                    ? "bg-paper border-gold text-gold-deep"
-                    : "bg-paper border-line text-ink-soft"
-              }`}
-            >
-              {status[i] === "done" ? (
-                <Check className="w-4 h-4" />
-              ) : status[i] === "active" ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <span className="font-display text-sm">{i + 1}</span>
-              )}
+          <div key={def.label} className="bg-card border border-line rounded-2xl p-5">
+            <div className="flex items-center gap-4">
+              <div
+                className={`shrink-0 w-7 h-7 rounded-full border flex items-center justify-center transition-colors duration-300 ${
+                  status[i] === "done"
+                    ? "bg-teal border-teal text-cream"
+                    : status[i] === "active"
+                      ? "bg-paper border-gold text-gold-deep"
+                      : "bg-paper border-line text-ink-soft"
+                }`}
+              >
+                {status[i] === "done" ? (
+                  <Check className="w-4 h-4" />
+                ) : status[i] === "active" ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <span className="font-display text-xs">{i + 1}</span>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-[0.95rem]">{def.label}</p>
+                <p className="text-xs text-ink-soft mt-0.5">{def.provider}</p>
+              </div>
+              <span className={`text-xs font-medium shrink-0 ${status[i] === "done" ? "text-teal" : "text-ink-soft"}`}>
+                {status[i] === "done" ? "Complete" : status[i] === "active" ? "Working…" : "Pending"}
+              </span>
             </div>
-            <div className="pt-0.5">
-              <h3 className={`font-medium text-[1.05rem] ${status[i] === "pending" ? "text-ink-soft" : "text-ink"}`}>
-                {def.label}
-              </h3>
-              <p className="mt-1 text-sm text-ink-soft leading-relaxed min-h-[1.25rem]">
-                {status[i] === "done" && notes[i] ? notes[i] : status[i] === "active" ? def.working : " "}
-              </p>
-            </div>
-          </li>
+            {status[i] !== "pending" && (
+              <div className="mt-3 pl-11 grid sm:grid-cols-2 gap-3">
+                <div className="bg-teal-paper/60 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-teal-deep">What it does</p>
+                  <p className="text-xs text-ink-soft mt-0.5">{def.whatItDoes}</p>
+                </div>
+                <div className="bg-teal-paper/60 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-teal-deep">Finding</p>
+                  <p className="text-xs text-ink-soft mt-0.5 min-h-[1.5em]">
+                    {status[i] === "done" && notes[i] ? notes[i] : def.working}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
         ))}
-      </ol>
+      </div>
     </div>
   );
 }

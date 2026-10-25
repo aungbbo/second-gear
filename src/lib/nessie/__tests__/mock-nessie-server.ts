@@ -43,13 +43,14 @@ export interface MockNessie {
   close(): Promise<void>;
 }
 
-const RESOURCES = ["deposits", "withdrawals", "purchases", "bills", "loans"] as const;
+const RESOURCES = ["deposits", "withdrawals", "purchases", "transfers", "bills", "loans"] as const;
 const DATE_FIELDS = ["transaction_date", "purchase_date", "payment_date"];
 
 /** Status values each create accepts. Deposits must send one, as the live sandbox demands. */
 const STATUS_RULES: Record<string, { required: boolean; allowed: string[]; schema: string }> = {
   deposits: { required: true, allowed: ["pending", "cancelled", "completed", "executed"], schema: "DepositCreate" },
   withdrawals: { required: false, allowed: ["pending", "cancelled", "completed", "executed"], schema: "WithdrawalCreate" },
+  transfers: { required: false, allowed: ["pending", "cancelled", "completed", "executed"], schema: "TransferCreate" },
   purchases: { required: false, allowed: ["pending", "cancelled", "completed", "executed", "recurring"], schema: "PurchaseCreate" },
   bills: { required: true, allowed: ["pending", "cancelled", "completed", "recurring"], schema: "BillCreate" },
 };

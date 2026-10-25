@@ -15,10 +15,10 @@ export function DealerPacketView({ result, onBack }: DealerPacketViewProps) {
   const generated = new Date(dealerPacket.generatedAt);
 
   return (
-    <div className="max-w-2xl">
+    <div className="max-w-2xl mx-auto">
       <div className="no-print flex items-center gap-4 mb-8">
         <Button variant="ghost" onClick={onBack}>
-          Back to results
+          Back
         </Button>
         <Button variant="secondary" onClick={() => window.print()}>
           <Printer className="w-4 h-4" />
@@ -26,7 +26,7 @@ export function DealerPacketView({ result, onBack }: DealerPacketViewProps) {
         </Button>
       </div>
 
-      <div className="border border-ink/30 bg-cream p-8 sm:p-10">
+      <div className="border border-ink/30 bg-cream rounded-2xl p-8 sm:p-10">
         <div className="flex items-start justify-between pb-6 border-b border-ink/20">
           <Logo />
           <div className="text-right">

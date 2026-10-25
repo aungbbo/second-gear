@@ -10,10 +10,10 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const base =
-  "inline-flex items-center justify-center gap-2 font-medium transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none";
+  "inline-flex items-center justify-center gap-2 font-medium rounded-xl transition-colors duration-150 disabled:opacity-40 disabled:pointer-events-none";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-ink text-cream hover:bg-gold-deep",
+  primary: "bg-teal text-cream hover:bg-teal-deep",
   secondary: "bg-transparent text-ink border border-ink/70 hover:border-ink hover:bg-paper-raised",
   ghost: "bg-transparent text-ink-soft hover:text-ink",
 };

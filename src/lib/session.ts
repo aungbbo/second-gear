@@ -51,7 +51,11 @@ export function setSessionCookie(response: NextResponse, value: string): void {
     name: SESSION_COOKIE_NAME,
     value,
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    // The __Host- prefix requires Secure unconditionally, in every
+    // environment — browsers silently refuse to set it otherwise. Chrome
+    // treats http://localhost as a secure context, so this still works in
+    // local dev without TLS.
+    secure: true,
     sameSite: "lax",
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,

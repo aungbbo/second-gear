@@ -7,6 +7,7 @@ import type {
   NessieLoan,
   NessiePurchase,
   NessieSnapshot,
+  NessieTransfer,
   NessieWithdrawal,
   WithAccount,
 } from "@/lib/nessie/types";
@@ -134,6 +135,32 @@ export function getAccountPurchases(cfg: LiveNessieConfig, accountId: string) {
   return getList<NessiePurchase>(cfg, `/accounts/${encodeURIComponent(accountId)}/purchases`, "amount");
 }
 
+/**
+ * Transfers diverge from every other resource in two ways: the sandbox
+ * answers 404 "No transfers found for this account" instead of `200 []`
+ * when an account has none yet (that 404 means "empty", not "missing"),
+ * and each listed record is keyed `id`, not `_id` like everything else
+ * (verified 2026-10-24) — without normalizing it, validateList drops every
+ * transfer as unidentifiable.
+ */
+export async function getAccountTransfers(cfg: LiveNessieConfig, accountId: string): Promise<ListResult<NessieTransfer>> {
+  const path = `/accounts/${encodeURIComponent(accountId)}/transfers`;
+  let body: unknown;
+  try {
+    body = await nessieGet(cfg, path);
+  } catch (err) {
+    if (err instanceof NessieError && err.kind === "not_found") return { records: [], dropped: 0 };
+    throw err;
+  }
+  const normalized = Array.isArray(body)
+    ? body.map((item) => {
+        const record = item as Record<string, unknown>;
+        return typeof record._id === "string" ? record : { ...record, _id: record.id };
+      })
+    : body;
+  return validateList<NessieTransfer>(normalized, "amount", describeEndpoint(path));
+}
+
 export function getAccountBills(cfg: LiveNessieConfig, accountId: string) {
   return getList<NessieBill>(cfg, `/accounts/${encodeURIComponent(accountId)}/bills`, "payment_amount");
 }
@@ -155,6 +182,137 @@ export async function getAccountLoans(cfg: LiveNessieConfig, accountId: string):
     }
     throw err;
   }
+}
+
+// --- Writes -----------------------------------------------------------
+//
+// Unlike every read above, these create real records in the live sandbox.
+// Never retried: a retry on a GET is safe (idempotent), but retrying a POST
+// after a timeout could create the record twice. ASCII-only, status always
+// set explicitly — the live sandbox rejects a non-ASCII payload or a
+// transaction create missing `status`, lessons learned the hard way by
+// scripts/nessie-seed.mjs (see docs/nessie-sandbox.md).
+
+const toAscii = (text: string) => text.replace(/[^\x20-\x7e]/g, "").trim();
+
+async function nessiePostOnce(cfg: LiveNessieConfig, path: string, body: Record<string, unknown>): Promise<Response> {
+  const url = `${cfg.baseUrl}${path}?key=${encodeURIComponent(cfg.apiKey)}`;
+  try {
+    return await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    const name = (err as { name?: string })?.name;
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw new NessieError("timeout", UNAVAILABLE, { detail: `timed out: POST ${path}` });
+    }
+    throw new NessieError("upstream", UNAVAILABLE, { detail: `network error: POST ${path}` });
+  }
+}
+
+async function nessiePost(cfg: LiveNessieConfig, path: string, body: Record<string, unknown>): Promise<void> {
+  const endpoint = `POST ${path.replace(/\/(customers|accounts|merchants)\/[^/]+/g, "/$1/:id")}`;
+  const response = await nessiePostOnce(cfg, path, body);
+  if (response.status === 401 || response.status === 403) {
+    throw new NessieError("auth", "The bank data service rejected our credentials.", {
+      status: response.status,
+      detail: `HTTP ${response.status} from ${endpoint}`,
+    });
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new NessieError("upstream", UNAVAILABLE, {
+      status: response.status,
+      detail: `HTTP ${response.status} from ${endpoint}${text ? `: ${text.slice(0, 200)}` : ""}`,
+    });
+  }
+}
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/** Most recent due date on or before today for a bill due on `dayOfMonth` (1-28). */
+export function mostRecentDueDate(dayOfMonth: number, now: Date = new Date()): string {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth();
+  const d = now.getUTCDate();
+  const target = d >= dayOfMonth ? new Date(Date.UTC(y, m, dayOfMonth)) : new Date(Date.UTC(y, m - 1, dayOfMonth));
+  return target.toISOString().slice(0, 10);
+}
+
+export async function createDeposit(
+  cfg: LiveNessieConfig,
+  accountId: string,
+  amount: number,
+  description: string,
+): Promise<void> {
+  await nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/deposits`, {
+    medium: "balance",
+    status: "completed",
+    transaction_date: todayIso(),
+    amount,
+    description: toAscii(description).slice(0, 100) || "Deposit",
+  });
+}
+
+export async function createWithdrawal(
+  cfg: LiveNessieConfig,
+  accountId: string,
+  amount: number,
+  description: string,
+): Promise<void> {
+  await nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/withdrawals`, {
+    medium: "balance",
+    status: "completed",
+    transaction_date: todayIso(),
+    amount,
+    description: toAscii(description).slice(0, 100) || "Withdrawal",
+  });
+}
+
+/**
+ * `toAccountId` is accepted for callers' clarity but never sent: the live
+ * sandbox's TransferCreate schema has no destination field at all — every
+ * name tried (`payee_id`, `transfer_to_id`, `toAccountId`, even as a query
+ * param) is rejected as an extra field or silently dropped (verified
+ * 2026-10-24, see docs/nessie-sandbox.md). `withPostedActivity` instead
+ * credits the account's one savings account by convention.
+ */
+export async function createTransfer(
+  cfg: LiveNessieConfig,
+  fromAccountId: string,
+  toAccountId: string,
+  amount: number,
+  description: string,
+): Promise<void> {
+  void toAccountId;
+  await nessiePost(cfg, `/accounts/${encodeURIComponent(fromAccountId)}/transfers`, {
+    status: "completed",
+    transaction_date: todayIso(),
+    amount,
+    description: toAscii(description).slice(0, 100) || "Transfer",
+  });
+}
+
+export async function createBill(
+  cfg: LiveNessieConfig,
+  accountId: string,
+  amount: number,
+  nickname: string,
+  payee: string,
+  dayOfMonth: number,
+): Promise<void> {
+  await nessiePost(cfg, `/accounts/${encodeURIComponent(accountId)}/bills`, {
+    status: "recurring",
+    nickname: toAscii(nickname).slice(0, 60) || "Bill",
+    payee: toAscii(payee).slice(0, 60) || "Payee",
+    payment_amount: amount,
+    recurring_date: dayOfMonth,
+    payment_date: mostRecentDueDate(dayOfMonth),
+  });
 }
 
 function tag<T>(records: T[], accountId: string): WithAccount<T>[] {
@@ -208,14 +366,15 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
 
   const perAccount = await Promise.all(
     accounts.map(async (account) => {
-      const [deposits, withdrawals, purchases, bills, loans] = await Promise.all([
+      const [deposits, withdrawals, purchases, transfers, bills, loans] = await Promise.all([
         getAccountDeposits(cfg, account._id),
         getAccountWithdrawals(cfg, account._id),
         getAccountPurchases(cfg, account._id),
+        getAccountTransfers(cfg, account._id),
         getAccountBills(cfg, account._id),
         getAccountLoans(cfg, account._id),
       ]);
-      return { accountId: account._id, deposits, withdrawals, purchases, bills, loans };
+      return { accountId: account._id, deposits, withdrawals, purchases, transfers, bills, loans };
     }),
   );
 
@@ -224,6 +383,7 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     deposits: [],
     withdrawals: [],
     purchases: [],
+    transfers: [],
     bills: [],
     loans: [],
     dropped: accountsResult.dropped,
@@ -233,12 +393,14 @@ export async function fetchNessieSnapshot(cfg: LiveNessieConfig): Promise<Nessie
     snapshot.deposits.push(...tag(entry.deposits.records, entry.accountId));
     snapshot.withdrawals.push(...tag(entry.withdrawals.records, entry.accountId));
     snapshot.purchases.push(...tag(entry.purchases.records, entry.accountId));
+    snapshot.transfers.push(...tag(entry.transfers.records, entry.accountId));
     snapshot.bills.push(...tag(entry.bills.records, entry.accountId));
     snapshot.loans.push(...tag(entry.loans.records, entry.accountId));
     snapshot.dropped +=
       entry.deposits.dropped +
       entry.withdrawals.dropped +
       entry.purchases.dropped +
+      entry.transfers.dropped +
       entry.bills.dropped +
       entry.loans.dropped;
   }

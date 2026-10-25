@@ -1,6 +1,6 @@
 import { NessieError } from "@/lib/nessie/errors";
 
-export const DEFAULT_NESSIE_BASE_URL = "https://api.nessieisreal.com";
+export const DEFAULT_NESSIE_BASE_URL = "https://prod-api.nessieisreal.com";
 
 export type NessieConfig =
   | { mode: "mock" }

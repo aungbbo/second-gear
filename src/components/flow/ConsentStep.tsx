@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, Landmark, ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Eyebrow } from "@/components/ui/Eyebrow";
+import { Toggle } from "@/components/ui/Toggle";
 import type { BuyerNeed } from "@/lib/types";
 
 /** Must match SOFT_PULL_CONSENT_VERSION on the server; bump both when the consent text changes. */
@@ -16,8 +18,12 @@ interface ConsentStepProps {
 }
 
 export function ConsentStep({ need, onApprove, onBack }: ConsentStepProps) {
+  const [creditOn, setCreditOn] = useState(false);
+  const [cashFlowOn, setCashFlowOn] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const bothOn = creditOn && cashFlowOn;
 
   async function approve() {
     setSubmitting(true);
@@ -38,46 +44,67 @@ export function ConsentStep({ need, onApprove, onBack }: ConsentStepProps) {
   }
 
   return (
-    <div className="max-w-xl">
-      <h1 className="font-display text-[2rem] sm:text-[2.4rem] leading-tight">
-        One approval, then it runs on its own.
-      </h1>
-      <p className="mt-3 text-ink-soft">
-        We need your go-ahead for a soft credit check. It&apos;s how this shows you real numbers instead of
-        guesses.
-      </p>
+    <div className="max-w-2xl mx-auto">
+      <button type="button" onClick={onBack} className="inline-flex items-center gap-1 text-sm text-ink-soft hover:text-ink">
+        <ChevronLeft className="w-4 h-4" /> Back
+      </button>
 
-      <div className="mt-9 border border-line bg-paper-raised/60 p-6">
-        <div className="flex items-start gap-3">
-          <ShieldCheck className="w-5 h-5 mt-0.5 text-moss shrink-0" />
-          <div>
-            <p className="font-medium">This is a soft pull — it won&apos;t affect your credit score.</p>
-            <p className="mt-1.5 text-sm text-ink-soft leading-relaxed">
-              It&apos;s the same kind of check you&apos;d see on a pre-approval page, not a hard inquiry a lender
-              runs when you formally apply.
-            </p>
+      <div className="mt-6 text-center">
+        <Eyebrow icon={<ShieldCheck className="w-3.5 h-3.5" />}>Your permission matters</Eyebrow>
+        <h1 className="font-display font-extrabold text-[2rem] sm:text-[2.5rem] leading-tight mt-3">
+          Choose what to include.
+        </h1>
+      </div>
+
+      <div className="mt-8 space-y-4">
+        <div className={`flex items-start gap-4 rounded-2xl border p-5 ${creditOn ? "border-teal" : "border-line"}`}>
+          <span className="w-10 h-10 rounded-xl bg-teal-paper flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-5 h-5 text-teal-deep" />
+          </span>
+          <div className="flex-1">
+            <p className="font-medium">Credit analysis</p>
+            <p className="text-sm text-ink-soft mt-0.5">Uses your credit profile to estimate an APR.</p>
+            <p className="text-xs text-teal-deep mt-1">No credit inquiry is made</p>
           </div>
+          <Toggle checked={creditOn} onChange={setCreditOn} label="Include credit analysis" />
         </div>
 
-        <dl className="mt-6 pt-6 border-t border-line grid grid-cols-2 gap-y-3 text-sm">
-          <dt className="text-ink-soft">Budget you gave us</dt>
-          <dd className="text-right tabular">${need.maxMonthlyPayment}/mo</dd>
-          <dt className="text-ink-soft">Timeframe</dt>
-          <dd className="text-right">{weeksLabel(need.timeframeWeeks)}</dd>
-          <dt className="text-ink-soft">What happens next</dt>
-          <dd className="text-right">Credit, cash flow, listings, loan math — automatically</dd>
-        </dl>
+        <div className={`flex items-start gap-4 rounded-2xl border p-5 ${cashFlowOn ? "border-teal" : "border-line"}`}>
+          <span className="w-10 h-10 rounded-xl bg-teal-paper flex items-center justify-center shrink-0">
+            <Landmark className="w-5 h-5 text-teal-deep" />
+          </span>
+          <div className="flex-1">
+            <p className="font-medium">Cash flow analysis</p>
+            <p className="text-sm text-ink-soft mt-0.5">Uses your income and spending to test affordability.</p>
+            <p className="text-xs text-teal-deep mt-1">No account is connected</p>
+          </div>
+          <Toggle checked={cashFlowOn} onChange={setCashFlowOn} label="Include cash flow analysis" />
+        </div>
       </div>
 
-      <div className="mt-8 flex items-center gap-4">
-        <Button size="lg" onClick={approve} disabled={submitting}>
-          {submitting ? "Recording approval…" : "Approve soft credit check"}
-        </Button>
-        <Button variant="ghost" onClick={onBack}>
-          Back
-        </Button>
+      <div className="mt-6 bg-teal-paper/60 rounded-2xl p-5 grid grid-cols-2 gap-4 text-center text-xs text-ink-soft">
+        <div>
+          <p className="font-medium text-ink">Nothing shared with dealers</p>
+        </div>
+        <div>
+          <p className="font-medium text-ink">No transfers or applications</p>
+        </div>
       </div>
-      {error && <p className="mt-4 text-sm text-rust">{error}</p>}
+
+      <dl className="mt-6 grid grid-cols-2 gap-y-2 text-sm text-ink-soft">
+        <dt>Budget you gave us</dt>
+        <dd className="text-right tabular text-ink">${need.maxMonthlyPayment}/mo</dd>
+        <dt>Timeframe</dt>
+        <dd className="text-right text-ink">{weeksLabel(need.timeframeWeeks)}</dd>
+      </dl>
+
+      <Button size="lg" onClick={approve} disabled={!bothOn || submitting} className="mt-8 w-full justify-center">
+        {submitting ? "Recording approval…" : "Continue →"}
+      </Button>
+      <p className="mt-2 text-center text-xs text-ink-soft">
+        {bothOn ? "Both analyses selected." : "Turn on both to continue."}
+      </p>
+      {error && <p className="mt-4 text-sm text-rust text-center">{error}</p>}
     </div>
   );
 }

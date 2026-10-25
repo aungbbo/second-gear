@@ -8,23 +8,13 @@ import { ConsentError, consumeConsentToken, type VerifiedConsent } from "@/lib/c
 import { ConsentConfigurationError, ConsentStorageError } from "@/lib/consent-store";
 import { assertLiveCrsRequest, LiveCrsAccessError } from "@/lib/crs/guard";
 import { CrsError, type CrsErrorKind } from "@/lib/crs/errors";
-import { NessieError, type NessieErrorKind } from "@/lib/nessie/errors";
+import { NessieError, NESSIE_ERROR_STATUS } from "@/lib/nessie/errors";
 import { ApifyError, type ApifyErrorKind } from "@/lib/apify/errors";
 import type { BuyerNeed, PipelineResult } from "@/lib/types";
 import { assertRequestOrigin, getRequestIdentity, OriginConfigurationError } from "@/lib/request-identity";
 import { getSessionId } from "@/lib/session";
 import { enforceRateLimits, RateLimitError } from "@/lib/rate-limit";
 import { recordSecurityEvent } from "@/lib/monitoring";
-
-const NESSIE_ERROR_STATUS: Record<NessieErrorKind, number> = {
-  config: 503,
-  auth: 502,
-  timeout: 502,
-  upstream: 502,
-  invalid_response: 502,
-  not_found: 422,
-  insufficient_data: 422,
-};
 
 const CRS_ERROR_STATUS: Record<CrsErrorKind, number> = {
   config: 503,

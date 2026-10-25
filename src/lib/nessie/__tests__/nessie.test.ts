@@ -48,7 +48,7 @@ describe("getNessieConfig", () => {
 
   it("defaults the base URL and trims a trailing slash", () => {
     expect(getNessieConfig({ NESSIE_MODE: "live", NESSIE_API_KEY: "k", NESSIE_CUSTOMER_ID: "c" })).toMatchObject({
-      baseUrl: "https://api.nessieisreal.com",
+      baseUrl: "https://prod-api.nessieisreal.com",
     });
     expect(
       getNessieConfig({ NESSIE_MODE: "live", NESSIE_API_KEY: "k", NESSIE_CUSTOMER_ID: "c", NESSIE_BASE_URL: "http://x.test/" }),

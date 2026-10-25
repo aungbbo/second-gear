@@ -2,19 +2,23 @@
 
 :root {
   --ink: #16231f;
-  --ink-soft: #3c4a41;
-  --paper: #eff1ea;
-  --paper-raised: #e4e6da;
-  --paper-high: #daddcd;
-  --line: #c9cdbc;
-  --gold: #c68a2e;
-  --gold-deep: #9c6a1e;
-  --gold-paper: #f3e6cd;
-  --moss: #45614a;
-  --moss-paper: #dde6da;
-  --rust: #a84631;
-  --rust-paper: #ead9d1;
-  --cream: #f7f6f0;
+  --ink-soft: #4b584f;
+  --paper: #f4f2ea;
+  --paper-raised: #ece9de;
+  --paper-high: #dedacb;
+  --line: #e1ded0;
+  --card: #ffffff;
+  --teal: #1f6b5a;
+  --teal-deep: #154a3e;
+  --teal-paper: #e1efe8;
+  --gold: #d99a3d;
+  --gold-deep: #a9731e;
+  --gold-paper: #f6ecd8;
+  --moss: #1f6b5a;
+  --moss-paper: #e1efe8;
+  --rust: #c2611f;
+  --rust-paper: #f3e3d2;
+  --cream: #fbfaf5;
 }
 
 @theme inline {
@@ -24,6 +28,10 @@
   --color-paper-raised: var(--paper-raised);
   --color-paper-high: var(--paper-high);
   --color-line: var(--line);
+  --color-card: var(--card);
+  --color-teal: var(--teal);
+  --color-teal-deep: var(--teal-deep);
+  --color-teal-paper: var(--teal-paper);
   --color-gold: var(--gold);
   --color-gold-deep: var(--gold-deep);
   --color-gold-paper: var(--gold-paper);
@@ -34,6 +42,7 @@
   --color-cream: var(--cream);
   --font-display: var(--font-display);
   --font-body: var(--font-body);
+  --font-accent: var(--font-accent);
 }
 
 body {
@@ -47,12 +56,17 @@ body {
 }
 
 ::selection {
-  background: var(--gold);
+  background: var(--teal);
   color: var(--cream);
 }
 
+.font-accent {
+  font-family: var(--font-accent), serif;
+  font-style: italic;
+}
+
 .font-display {
-  font-family: var(--font-display), serif;
+  font-family: var(--font-display), sans-serif;
 }
 
 .tabular {
@@ -60,7 +74,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--gold-deep);
+  outline: 2px solid var(--teal-deep);
   outline-offset: 2px;
 }
 

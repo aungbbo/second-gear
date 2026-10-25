@@ -20,7 +20,7 @@ import { buildSeedDataset, DEFAULT_PERSONA, SEED_MARKER } from "./nessie-seed/da
 
 const require = createRequire(import.meta.url);
 const MANIFEST_PATH = ".nessie-seed.local.json";
-const DEFAULT_BASE_URL = "https://api.nessieisreal.com";
+const DEFAULT_BASE_URL = "https://prod-api.nessieisreal.com";
 // Tests shorten the gap; the real sandbox gets 150 ms between POSTs.
 const POST_GAP_MS = Number(process.env.NESSIE_SEED_POST_GAP_MS ?? 150);
 const TIMEOUT_MS = 10000;

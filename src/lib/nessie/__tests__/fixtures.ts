@@ -72,6 +72,7 @@ export function baselineSnapshot(): NessieSnapshot {
       { _id: "p1", accountId: "cc", purchase_date: "2026-10-10", amount: 400, description: "Groceries", merchant_id: "m1", medium: "balance" },
       { _id: "p2", accountId: "cc", purchase_date: "2026-09-10", amount: 200, description: "Dinner", merchant_id: "m2", medium: "balance" },
     ],
+    transfers: [],
     bills: [
       { _id: "b1", accountId: "chk", status: "recurring", payee: "Landlord", nickname: "Rent", recurring_date: 1, payment_amount: 1100 },
       { _id: "b2", accountId: "chk", status: "completed", payee: "Power Co", nickname: "Electric", payment_date: "2026-10-05", payment_amount: 90 },
@@ -101,6 +102,7 @@ export function baselineRoutes(): Record<string, unknown> {
     routes[`/accounts/${_id}/deposits`] = strip(snap.deposits, _id);
     routes[`/accounts/${_id}/withdrawals`] = strip(snap.withdrawals, _id);
     routes[`/accounts/${_id}/purchases`] = strip(snap.purchases, _id);
+    routes[`/accounts/${_id}/transfers`] = strip(snap.transfers, _id);
     routes[`/accounts/${_id}/bills`] = strip(snap.bills, _id);
     routes[`/accounts/${_id}/loans`] = strip(snap.loans, _id);
   }
@@ -147,6 +149,7 @@ export function seedSnapshot(dataset: SeedDataset): NessieSnapshot {
       accountId: accountId(p.account),
       merchant_id: `merchant-${p.merchant}`,
     })),
+    transfers: [],
     bills: tagged(dataset.bills, "bill"),
     loans: tagged(dataset.loans, "loan"),
     dropped: 0,
