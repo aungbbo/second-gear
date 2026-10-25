@@ -16,12 +16,13 @@ type Phase = "intake" | "consent" | "pipeline" | "results" | "decision" | "packe
 function defaultNeed(params: URLSearchParams): BuyerNeed {
   const budget = Number(params.get("budget"));
   const weeks = Number(params.get("weeks"));
+  const zip = params.get("zip")?.trim() ?? "";
   return {
-    description: "A reliable car to commute, nothing fancy.",
+    description: "",
     maxMonthlyPayment: Number.isFinite(budget) && budget > 0 ? budget : 400,
-    timeframeWeeks: Number.isFinite(weeks) && weeks > 0 ? weeks : 4,
+    timeframeWeeks: Number.isFinite(weeks) && weeks > 0 ? weeks : 0,
     downPayment: 0,
-    zip: "43215",
+    zip: /^\d{5}$/.test(zip) ? zip : "",
   };
 }
 

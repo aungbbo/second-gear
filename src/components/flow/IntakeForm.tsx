@@ -39,18 +39,29 @@ const PRIORITY_SORT: Record<(typeof PRIORITIES)[number], NonNullable<BuyerNeed["
 };
 
 export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
-  const [budget, setBudget] = useState(initial.maxMonthlyPayment);
-  const [carType, setCarType] = useState<(typeof CAR_TYPES)[number]>("Sedan");
-  const [timeframe, setTimeframe] = useState(TIMEFRAMES[1]);
-  const [commute, setCommute] = useState(COMMUTES[1]);
-  const [priority, setPriority] = useState(PRIORITIES[0]);
+  const [budget, setBudget] = useState(initial.maxMonthlyPayment > 0 ? initial.maxMonthlyPayment : 400);
+  const [carType, setCarType] = useState<(typeof CAR_TYPES)[number] | null>(null);
+  const [timeframe, setTimeframe] = useState(() => TIMEFRAMES.find((tf) => tf.weeks === initial.timeframeWeeks) ?? null);
+  const [commute, setCommute] = useState("");
+  const [priority, setPriority] = useState<(typeof PRIORITIES)[number] | "">("");
   // Keep the editable text separate from its numeric value so users can clear
   // the field while replacing the default.
-  const [downPayment, setDownPayment] = useState(String(initial.downPayment));
+  const [downPayment, setDownPayment] = useState(initial.downPayment > 0 ? String(initial.downPayment) : "");
   const [zip, setZip] = useState(initial.zip);
+
+  const formReady =
+    budget !== null &&
+    Number.isFinite(budget) &&
+    budget >= 100 &&
+    carType !== null &&
+    timeframe !== null &&
+    commute !== "" &&
+    priority !== "" &&
+    /^\d{5}$/.test(zip);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!formReady || budget === null || carType === null || timeframe === null || priority === "") return;
     const carPhrase = carType === "No preference" ? "a reliable car" : `a reliable ${carType.toLowerCase()}`;
     onSubmit({
       description: `${carPhrase} for a ${commute.toLowerCase()} commute, prioritizing ${priority.toLowerCase()}.`,
@@ -105,7 +116,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
           <p className="text-sm font-medium mb-3">When do you need your car?</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {TIMEFRAMES.map((tf) => (
-              <PillOption key={tf.label} label={tf.label} selected={timeframe.label === tf.label} onClick={() => setTimeframe(tf)} />
+              <PillOption key={tf.label} label={tf.label} selected={timeframe?.label === tf.label} onClick={() => setTimeframe(tf)} />
             ))}
           </div>
         </div>
@@ -115,6 +126,9 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
             <span className="text-sm font-medium">Daily commute</span>
             <div className="mt-2 border border-line rounded-xl px-4 py-3 focus-within:border-teal">
               <select value={commute} onChange={(e) => setCommute(e.target.value)} className="w-full bg-transparent focus:outline-none">
+                <option value="" disabled>
+                  Select commute
+                </option>
                 {COMMUTES.map((c) => (
                   <option key={c} value={c}>
                     {c}
@@ -126,7 +140,10 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
           <label className="block">
             <span className="text-sm font-medium">Top priority</span>
             <div className="mt-2 border border-line rounded-xl px-4 py-3 focus-within:border-teal">
-              <select value={priority} onChange={(e) => setPriority(e.target.value)} className="w-full bg-transparent focus:outline-none">
+              <select value={priority} onChange={(e) => setPriority(e.target.value as (typeof PRIORITIES)[number])} className="w-full bg-transparent focus:outline-none">
+                <option value="" disabled>
+                  Select priority
+                </option>
                 {PRIORITIES.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -149,6 +166,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
                 step={50}
                 value={downPayment}
                 onChange={(e) => setDownPayment(e.target.value)}
+                placeholder="Optional"
                 className="w-full bg-transparent focus:outline-none tabular"
               />
             </div>
@@ -164,7 +182,7 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
                 required
                 value={zip}
                 onChange={(e) => setZip(e.target.value.replace(/\D/g, "").slice(0, 5))}
-                placeholder="43215"
+                placeholder="Enter ZIP code"
                 className="w-full bg-transparent focus:outline-none tabular"
               />
             </div>
@@ -172,10 +190,12 @@ export function IntakeForm({ initial, onSubmit }: IntakeFormProps) {
           </label>
         </div>
 
-        <Button type="submit" size="lg" className="w-full justify-center">
+        <Button type="submit" size="lg" disabled={!formReady} className="w-full justify-center">
           Build my plan →
         </Button>
-        <p className="text-center text-xs text-ink-soft">No impact to your credit. You control every step.</p>
+        <p className="text-center text-xs text-ink-soft">
+          {formReady ? "No impact to your credit. You control every step." : "Enter a budget, choose each preference, and add a 5-digit ZIP code to continue."}
+        </p>
       </div>
     </form>
   );
